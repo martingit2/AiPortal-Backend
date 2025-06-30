@@ -5,57 +5,54 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.0</version> <!-- Beholdt din versjon -->
+        <!-- VIKTIG ENDRING: Bruker en kjent, stabil versjon som Maven vil finne -->
+        <version>3.3.0</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
-    <groupId>com.AiPortal</groupId> <!-- Justert for konsistens med frontend, kan endres -->
+    <groupId>com.AiPortal</groupId>
     <artifactId>demo1</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>demo1</name>
     <description>AiPortal Demo Backend</description>
-    <!-- <url/>, <licenses/>, <developers/>, <scm/> er valgfrie og kan fjernes -->
 
     <properties>
-        <java.version>17</java.version>
+        <!-- VIKTIG ENDRING: Matcher JDK-versjonen du har satt opp (21) -->
+        <java.version>21</java.version>
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Starter for Web applikasjoner (inkluderer RESTful, Spring MVC, Tomcat) -->
+        <!-- Spring Boot Starter for Web applikasjoner -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Spring Boot Starter for Sikkerhet (autentisering og autorisasjon) -->
+        <!-- Spring Boot Starter for Sikkerhet -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Spring Boot Starter for OAuth2 Resource Server (for JWT validering fra Clerk) -->
+        <!-- Spring Boot Starter for OAuth2 Resource Server (for JWT validering) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
-        <!-- Spring Boot Starter for Data JPA (for databaseinteraksjon med Supabase/PostgreSQL senere) -->
-        <!-- Fjern kommentar når du er klar for database:
+        <!-- Spring Boot Starter for Data JPA (for database) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
-        -->
 
-        <!-- PostgreSQL JDBC Driver (nødvendig for Data JPA med PostgreSQL) -->
-        <!-- Fjern kommentar når du er klar for database:
+        <!-- PostgreSQL JDBC Driver -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
-        -->
 
-        <!-- Spring Boot DevTools for enklere utvikling (automatisk omstart etc.) -->
+        <!-- Spring Boot DevTools -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
@@ -70,7 +67,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Spring Security Test (for testing av sikkerhetskonfigurasjoner) -->
+        <!-- Spring Security Test -->
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
@@ -83,15 +80,6 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <!-- Versjon for plugin arves vanligvis fra spring-boot-starter-parent -->
-                <!-- Hvis du trenger å spesifisere Docker image-konfigurasjon senere: -->
-                <!--
-                <configuration>
-                    <image>
-                        <name>dittbrukernavn/${project.artifactId}:${project.version}</name>
-                    </image>
-                </configuration>
-                -->
             </plugin>
         </plugins>
     </build>
