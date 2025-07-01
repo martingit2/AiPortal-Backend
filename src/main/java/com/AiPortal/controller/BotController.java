@@ -87,7 +87,7 @@ public class BotController {
         if (deleted) {
             return ResponseEntity.noContent().build(); // 204 No Content - standard for vellykket sletting
         } else {
-            return ResponseEntity.notFound().build(); // 404 Not Found
+            return ResponseEntity.notFound().build(); // 404 Not Founddasd
         }
     }
 }
