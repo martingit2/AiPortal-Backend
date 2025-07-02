@@ -4,20 +4,18 @@ import com.AiPortal.entity.Analysis;
 import com.AiPortal.entity.RawTweetData;
 import com.AiPortal.repository.AnalysisRepository;
 import com.AiPortal.repository.RawTweetDataRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient; // Viktig import
+import reactor.core.publisher.Mono;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 public class AnalysisService {
@@ -26,15 +24,26 @@ public class AnalysisService {
 
     private final AnalysisRepository analysisRepository;
     private final RawTweetDataRepository tweetRepository;
-    private final ObjectMapper objectMapper;
+    private final WebClient webClient; // WebClient for å kalle Python-tjenesten
 
     @Autowired
-    public AnalysisService(AnalysisRepository analysisRepository, RawTweetDataRepository tweetRepository, ObjectMapper objectMapper) {
+    public AnalysisService(AnalysisRepository analysisRepository,
+                           RawTweetDataRepository tweetRepository) {
         this.analysisRepository = analysisRepository;
         this.tweetRepository = tweetRepository;
-        this.objectMapper = objectMapper;
+        // Initialiserer WebClient til å peke på din Flask API
+        this.webClient = WebClient.builder()
+                .baseUrl("http://localhost:5001") // Porten Flask-appen din kjører på
+                .defaultHeader("Content-Type", "application/json")
+                .build();
     }
 
+    /**
+     * Henter alle analyser for en gitt bruker.
+     * @param userId Brukerens ID fra Clerk.
+     * @return En liste av analyser, sortert etter opprettelsestidspunkt.
+     */
+    @Transactional(readOnly = true)
     public List<Analysis> getAnalysesForUser(String userId) {
         return analysisRepository.findByUserIdOrderByCreatedAtDesc(userId);
     }
@@ -42,37 +51,39 @@ public class AnalysisService {
     /**
      * Starter en analysejobb. Oppretter en analyse-rad i databasen
      * og starter den asynkrone prosesseringen.
+     * @param tweetId ID-en til den lagrede tweeten som skal analyseres.
+     * @param userId Brukerens ID.
      * @return Den nyopprettede Analysis-entiteten med status QUEUED.
      */
     @Transactional
-    public Analysis startWordCountAnalysis(Long tweetId, String userId) {
-        // Finn tweeten for å få litt kontekst til navnet
+    public Analysis startSentimentAnalysis(Long tweetId, String userId) {
         RawTweetData tweet = tweetRepository.findById(tweetId)
                 .orElseThrow(() -> new IllegalArgumentException("Tweet ikke funnet med ID: " + tweetId));
 
         Analysis analysis = new Analysis();
-        analysis.setName("Ordtelling for tweet fra @" + tweet.getAuthorUsername());
+        analysis.setName("Sentimentanalyse for tweet fra @" + tweet.getAuthorUsername());
         analysis.setUserId(userId);
         analysis.setStatus(Analysis.AnalysisStatus.QUEUED);
 
         Analysis savedAnalysis = analysisRepository.save(analysis);
 
         // Start selve den tidkrevende analysen i en egen tråd
-        processAnalysis(savedAnalysis.getId());
+        processAnalysis(savedAnalysis.getId(), tweet.getContent()); // Send med tweet-teksten
 
         return savedAnalysis;
     }
 
     /**
-     * Asynkron metode som utfører selve analysen.
-     * Den vil kjøre i en separat tråd og ikke blokkere API-kallet.
+     * Asynkron metode som utfører selve analysen ved å kalle Python-tjenesten.
+     * @param analysisId ID-en til analysen som skal oppdateres.
+     * @param textToAnalyze Teksten som skal analyseres.
      */
     @Async
     @Transactional
-    public void processAnalysis(Long analysisId) {
+    public void processAnalysis(Long analysisId, String textToAnalyze) {
         log.info("Starter prosessering for analyse-ID: {}", analysisId);
 
-        // Hent analysen fra DB, sett status til RUNNING
+        // Hent analysen fra DB for å oppdatere den
         Analysis analysis = analysisRepository.findById(analysisId).orElse(null);
         if (analysis == null) {
             log.error("Kunne ikke finne analyse med ID: {} for prosessering.", analysisId);
@@ -80,37 +91,28 @@ public class AnalysisService {
         }
 
         analysis.setStatus(Analysis.AnalysisStatus.RUNNING);
-        analysisRepository.save(analysis);
+        analysisRepository.saveAndFlush(analysis); // Lagre statusendringen umiddelbart
 
         try {
-            // Finn den assosierte tweeten (her må vi ha en bedre måte, men for nå er det ok)
-            // I en ekte app ville du lagret tweet-IDen i Analysis-entiteten.
-            // For nå, la oss bare anta at vi finner den på en eller annen måte.
-            // Siden vi ikke har lagret tweetId i Analysis, er dette en placeholder.
-            // Vi henter den første tweeten i databasen for demonstrasjonens skyld.
-            RawTweetData tweetToAnalyze = tweetRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Ingen tweets å analysere"));
+            // Lag request body for Python API-et
+            Map<String, String> requestBody = Map.of("text", textToAnalyze);
 
-            // Simulerer litt arbeid
-            Thread.sleep(5000); // Vent 5 sekunder
+            // Kall Python/Flask AI-tjenesten og vent på svar
+            String sentimentResultJson = webClient.post()
+                    .uri("/analyze-sentiment")
+                    .bodyValue(requestBody)
+                    .retrieve() // Hent responsen
+                    .bodyToMono(String.class) // Konverter body til en String
+                    .block(); // .block() gjør kallet synkront. Enkelt og greit for en bakgrunnsjobb.
 
-            // Selve analysen: enkel ordtelling
-            String content = tweetToAnalyze.getContent().toLowerCase().replaceAll("[^a-zA-Zøæå\\s]", "");
-            Map<String, Long> wordCounts = Arrays.stream(content.split("\\s+"))
-                    .filter(word -> !word.isEmpty() && word.length() > 2) // Filtrer bort korte ord/tomme strenger
-                    .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
-
-            // Konverter resultatet til en JSON-streng
-            String resultJson = objectMapper.writeValueAsString(wordCounts);
-
-            // Oppdater analysen med resultat og status COMPLETED
-            analysis.setResult(resultJson);
+            // Suksess! Oppdater analysen med resultatet.
+            analysis.setResult(sentimentResultJson);
             analysis.setStatus(Analysis.AnalysisStatus.COMPLETED);
 
         } catch (Exception e) {
             log.error("Analyse feilet for ID: {}", analysisId, e);
             analysis.setStatus(Analysis.AnalysisStatus.FAILED);
-            analysis.setResult("Feil under analyse: " + e.getMessage());
+            analysis.setResult("Feil under kall til AI-tjeneste: " + e.getMessage());
         }
 
         analysis.setCompletedAt(Instant.now());

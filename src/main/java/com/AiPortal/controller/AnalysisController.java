@@ -35,16 +35,24 @@ public class AnalysisController {
     }
 
     /**
-     * Starter en ny ordtellingsanalyse på en gitt tweet.
+     * Starter en ny sentimentanalyse på en gitt tweet.
+     * Body forventes å være på formatet: { "tweetId": 123 }
      */
-    @PostMapping("/word-count")
-    public ResponseEntity<Analysis> startWordCountAnalysis(@RequestBody Map<String, Long> payload, @AuthenticationPrincipal Jwt jwt) {
+    @PostMapping("/sentiment")
+    public ResponseEntity<Analysis> startSentimentAnalysis(@RequestBody Map<String, Long> payload, @AuthenticationPrincipal Jwt jwt) {
         Long tweetId = payload.get("tweetId");
         if (tweetId == null) {
             return ResponseEntity.badRequest().build();
         }
         String userId = jwt.getSubject();
-        Analysis createdAnalysis = analysisService.startWordCountAnalysis(tweetId, userId);
-        return new ResponseEntity<>(createdAnalysis, HttpStatus.ACCEPTED); // 202 Accepted, siden jobben kjører i bakgrunnen
+
+        try {
+            Analysis createdAnalysis = analysisService.startSentimentAnalysis(tweetId, userId);
+            // 202 Accepted er en god statuskode for å indikere at en bakgrunnsjobb er startet.
+            return new ResponseEntity<>(createdAnalysis, HttpStatus.ACCEPTED);
+        } catch (IllegalArgumentException e) {
+            // Hvis tweetId ikke ble funnet i databasen
+            return ResponseEntity.notFound().build();
+        }
     }
 }
