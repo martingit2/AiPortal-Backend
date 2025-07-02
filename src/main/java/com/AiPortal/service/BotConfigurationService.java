@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-@Transactional // God praksis for service-lag som endrer data
+@Transactional
 public class BotConfigurationService {
 
     private final BotConfigurationRepository botRepository;
@@ -20,50 +20,25 @@ public class BotConfigurationService {
         this.botRepository = botRepository;
     }
 
-    /**
-     * Henter alle bot-konfigurasjoner for en gitt bruker.
-     * @param userId Clerk User ID.
-     * @return Liste av bot-konfigurasjoner.
-     */
     public List<BotConfiguration> getBotsForUser(String userId) {
         return botRepository.findByUserId(userId);
     }
 
-    /**
-     * Oppretter en ny bot-konfigurasjon for en bruker.
-     * @param botConfiguration Konfigurasjonsobjektet som skal lagres.
-     * @param userId Clerk User ID som skal eie boten.
-     * @return Den lagrede bot-konfigurasjonen.
-     */
     public BotConfiguration createBot(BotConfiguration botConfiguration, String userId) {
-        botConfiguration.setUserId(userId); // Sikrer at eieren er satt
-        botConfiguration.setStatus(BotConfiguration.BotStatus.PAUSED); // Starter som pauset som standard
+        botConfiguration.setUserId(userId);
+        botConfiguration.setStatus(BotConfiguration.BotStatus.PAUSED);
         return botRepository.save(botConfiguration);
     }
 
-    /**
-     * Oppdaterer statusen på en eksisterende bot.
-     * @param botId ID-en til boten som skal oppdateres.
-     * @param newStatus Den nye statusen (ACTIVE/PAUSED).
-     * @param userId Clerk User ID, for å verifisere eierskap.
-     * @return En Optional som inneholder den oppdaterte boten, eller er tom hvis boten ikke ble funnet eller brukeren ikke eier den.
-     */
     public Optional<BotConfiguration> updateBotStatus(Long botId, BotConfiguration.BotStatus newStatus, String userId) {
-        // Finn boten og sjekk at den tilhører den innloggede brukeren
         return botRepository.findById(botId)
-                .filter(bot -> bot.getUserId().equals(userId)) // Sikrer at du kun kan endre dine egne boter
+                .filter(bot -> bot.getUserId().equals(userId))
                 .map(bot -> {
                     bot.setStatus(newStatus);
                     return botRepository.save(bot);
                 });
     }
 
-    /**
-     * Sletter en bot.
-     * @param botId ID-en til boten som skal slettes.
-     * @param userId Clerk User ID, for å verifisere eierskap.
-     * @return true hvis boten ble slettet, false ellers.
-     */
     public boolean deleteBot(Long botId, String userId) {
         Optional<BotConfiguration> botOptional = botRepository.findById(botId);
         if (botOptional.isPresent() && botOptional.get().getUserId().equals(userId)) {
@@ -71,5 +46,16 @@ public class BotConfigurationService {
             return true;
         }
         return false;
+    }
+
+    /**
+     * NY METODE: Henter alle boter med gitt status og type, uavhengig av bruker.
+     * Brukes av den planlagte jobben.
+     * @param status Status å søke etter.
+     * @param sourceType Kildetype å søke etter.
+     * @return En liste med matchende boter.
+     */
+    public List<BotConfiguration> getAllBotsByStatusAndType(BotConfiguration.BotStatus status, BotConfiguration.SourceType sourceType) {
+        return botRepository.findByStatusAndSourceType(status, sourceType);
     }
 }

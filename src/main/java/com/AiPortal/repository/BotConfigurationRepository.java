@@ -10,11 +10,18 @@ import java.util.List;
 public interface BotConfigurationRepository extends JpaRepository<BotConfiguration, Long> {
 
     /**
-     * Egendefinert metode for å finne alle bot-konfigurasjoner for en spesifikk bruker.
-     * Spring Data JPA vil automatisk generere SQL-spørringen basert på metodenavnet.
+     * Finner alle bot-konfigurasjoner for en spesifikk bruker.
      * @param userId ID-en til brukeren (fra Clerk).
      * @return En liste av BotConfiguration-objekter som tilhører brukeren.
      */
     List<BotConfiguration> findByUserId(String userId);
 
+    /**
+     * NY METODE: Finner alle bot-konfigurasjoner med en gitt status og kildetype.
+     * Nødvendig for den planlagte jobben.
+     * @param status Statusen å søke etter (f.eks. ACTIVE).
+     * @param sourceType Kildetype å søke etter (f.eks. TWITTER).
+     * @return En liste av matchende bot-konfigurasjoner.
+     */
+    List<BotConfiguration> findByStatusAndSourceType(BotConfiguration.BotStatus status, BotConfiguration.SourceType sourceType);
 }

@@ -1,5 +1,6 @@
 package com.AiPortal.service;
 
+import com.AiPortal.dto.TweetDto;
 import com.AiPortal.entity.RawTweetData;
 import com.AiPortal.repository.RawTweetDataRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@Transactional(readOnly = true) // De fleste metoder her leser bare data
+@Transactional(readOnly = true)
 public class TweetService {
 
     private final RawTweetDataRepository tweetRepository;
@@ -22,14 +23,22 @@ public class TweetService {
     }
 
     /**
-     * Henter en paginert liste av de sist lagrede tweets.
+     * Henter en paginert liste av de sist lagrede tweets som en DTO.
      * @param page Sidenummer (0-basert).
      * @param size Antall elementer per side.
-     * @return En Page med RawTweetData.
+     * @return En Page med TweetDto.
      */
-    public Page<RawTweetData> getLatestTweets(int page, int size) {
-        // Sorterer synkende på 'createdAt' for å få de nyeste først
+    public Page<TweetDto> getLatestTweets(int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
-        return tweetRepository.findAll(pageable);
+        Page<RawTweetData> rawDataPage = tweetRepository.findAll(pageable);
+
+        // Konverterer fra RawTweetData (Entity) til TweetDto
+        return rawDataPage.map(tweet -> new TweetDto(
+                tweet.getId(),
+                tweet.getAuthorUsername(),
+                tweet.getContent(),
+                tweet.getTweetedAt(),
+                tweet.getSourceBot() != null ? tweet.getSourceBot().getName() : "Ukjent Kilde"
+        ));
     }
 }
