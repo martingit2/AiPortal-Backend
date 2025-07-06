@@ -29,41 +29,41 @@ public class ScheduledBotRunner {
     private final TwitterService twitterService;
     private final RawTweetDataRepository tweetRepository;
     private final TwitterQueryStateRepository queryStateRepository;
+    private final FootballApiService footballApiService; // NY SERVICE INJISERT
 
     public ScheduledBotRunner(BotConfigurationService botConfigService,
                               BotConfigurationRepository botConfigRepository,
                               TwitterService twitterService,
                               RawTweetDataRepository tweetRepository,
-                              TwitterQueryStateRepository queryStateRepository) {
+                              TwitterQueryStateRepository queryStateRepository,
+                              FootballApiService footballApiService) { // NY DEPENDENCY
         this.botConfigService = botConfigService;
         this.botConfigRepository = botConfigRepository;
         this.twitterService = twitterService;
         this.tweetRepository = tweetRepository;
         this.queryStateRepository = queryStateRepository;
+        this.footballApiService = footballApiService; // NY
     }
 
     /**
      * Kjører periodisk for å hente nye tweets fra aktive Twitter-boter.
-     * fixedRate er satt til 960 000 ms (16 minutter) for å være trygt innenfor Twitter API sin gratis-grense (1 kall / 15 min).
-     * initialDelay venter 60 sekunder etter app-oppstart før første kjøring.
+     * Rate er satt til 16 minutter for å være trygg med Twitter API sin gratis-grense.
      */
     @Scheduled(fixedRate = 960000, initialDelay = 60000)
     @Transactional
     public void runTwitterSearchBot() {
-        log.info("Starter planlagt Twitter-søk...");
+        log.info("--- Starter planlagt Twitter-søk ---");
 
-        // 1. Hent alle aktive Twitter-boter
         List<BotConfiguration> activeTwitterBots = botConfigService.getAllBotsByStatusAndType(
                 BotConfiguration.BotStatus.ACTIVE,
                 BotConfiguration.SourceType.TWITTER
         );
 
         if (activeTwitterBots.isEmpty()) {
-            log.info("Ingen aktive Twitter-boter funnet. Avslutter kjøring.");
+            log.info("Ingen aktive Twitter-boter funnet. Avslutter Twitter-kjøring.");
             return;
         }
 
-        // 2. Bygg en map og en spørring fra de aktive botene
         Map<String, BotConfiguration> botMap = activeTwitterBots.stream()
                 .collect(Collectors.toMap(
                         bot -> bot.getSourceIdentifier().toLowerCase(),
@@ -76,27 +76,20 @@ public class ScheduledBotRunner {
         query += " -is:retweet";
         log.info("Bygget Twitter-spørring: {}", query);
 
-        // 3. Hent sist sette tweet-ID for å unngå duplikater
         String sinceId = queryStateRepository.findById("recent_search_all_bots")
                 .map(TwitterQueryState::getLastSeenTweetId)
                 .orElse(null);
-        log.info("Henter tweets siden ID: {}", sinceId == null ? "N/A (henter de nyeste)" : sinceId);
+        log.info("Henter tweets siden ID: {}", sinceId == null ? "N/A" : sinceId);
 
-
-        // 4. Utfør API-kallet
         twitterService.searchRecentTweets(query, sinceId)
-                .subscribe(responseBody -> { // Denne blokken kjøres ved et vellykket API-svar (status 200 OK)
-
-                    // --- Logikken for å oppdatere lastRun kjøres nå alltid ved suksess ---
+                .subscribe(responseBody -> {
                     Instant now = Instant.now();
                     activeTwitterBots.forEach(bot -> {
                         bot.setLastRun(now);
-                        botConfigRepository.save(bot); // Lagre endringen for hver bot
+                        botConfigRepository.save(bot);
                     });
-                    log.info("Oppdatert 'lastRun' for {} aktive bot(er).", activeTwitterBots.size());
+                    log.info("Oppdatert 'lastRun' for {} aktive Twitter-bot(er).", activeTwitterBots.size());
 
-
-                    // --- Fortsett med å behandle svaret ---
                     List<JsonNode> tweets = twitterService.parseTweetsFromResponse(responseBody);
                     String newestId = twitterService.parseNewestTweetId(responseBody);
 
@@ -106,7 +99,6 @@ public class ScheduledBotRunner {
                         int newTweetsCount = 0;
                         for (JsonNode tweet : tweets) {
                             String tweetId = tweet.path("id").asText();
-                            // Sjekk om tweeten allerede er lagret for å være helt sikker
                             if (!tweetRepository.existsByTweetId(tweetId)) {
                                 String authorId = tweet.path("author_id").asText();
                                 String authorUsername = twitterService.findUsernameFromIncludes(responseBody, authorId);
@@ -130,7 +122,6 @@ public class ScheduledBotRunner {
                         }
                     }
 
-                    // Oppdater 'since_id' for neste kjøring
                     if (newestId != null) {
                         TwitterQueryState state = new TwitterQueryState();
                         state.setLastSeenTweetId(newestId);
@@ -138,9 +129,61 @@ public class ScheduledBotRunner {
                         log.info("Oppdatert 'lastSeenTweetId' til: {}", newestId);
                     }
 
-                }, error -> { // Denne blokken kjøres ved en API-feil (f.eks. 429 Too Many Requests)
-                    // Vi oppdaterer IKKE lastRun ved feil, slik at vi vet at siste kjøring feilet.
+                }, error -> {
                     log.error("Feil ved kjøring av Twitter-søk: {}", error.getMessage());
                 });
+    }
+
+    /**
+     * NY METODE: Kjører periodisk for å hente sportsdata.
+     * Har en annen tidsplan for å ikke forstyrre andre API-grenser.
+     */
+    @Scheduled(fixedRate = 600000, initialDelay = 120000) // Hvert 10. min, venter 2 min
+    @Transactional
+    public void runSportDataBots() {
+        log.info("--- Starter planlagt kjøring av sportsdata-boter ---");
+
+        List<BotConfiguration> activeSportBots = botConfigService.getAllBotsByStatusAndType(
+                BotConfiguration.BotStatus.ACTIVE,
+                BotConfiguration.SourceType.SPORT_API
+        );
+
+        if (activeSportBots.isEmpty()) {
+            log.info("Ingen aktive sportsdata-boter funnet. Avslutter sport-kjøring.");
+            return;
+        }
+
+        for (BotConfiguration bot : activeSportBots) {
+            log.info("Kjører sports-bot: '{}' med kilde: {}", bot.getName(), bot.getSourceIdentifier());
+
+            String[] params = bot.getSourceIdentifier().split(":");
+            if (params.length != 3) {
+                log.error("Ugyldig sourceIdentifier for sport-bot {}: {}. Forventet format: 'ligaId:sesong:lagId'", bot.getId(), bot.getSourceIdentifier());
+                continue; // Gå til neste bot
+            }
+
+            String leagueId = params[0];
+            String season = params[1];
+            String teamId = params[2];
+
+            footballApiService.getTeamStatistics(leagueId, season, teamId)
+                    .subscribe(responseJson -> {
+                        log.info("Mottatt statistikk for team {}: {}", teamId, responseJson.substring(0, Math.min(responseJson.length(), 200)) + "..."); // Logger kun starten av JSON
+
+                        // TODO: Lagre denne dataen!
+                        // 1. Lag en @Entity klasse, f.eks. TeamStatistics.java
+                        // 2. Lag et TeamStatisticsRepository.
+                        // 3. Bruk ObjectMapper til å parse responseJson inn i ditt/dine entity-objekter.
+                        // 4. Lagre objektene i databasen.
+
+                        // Oppdater lastRun for boten
+                        bot.setLastRun(Instant.now());
+                        botConfigRepository.save(bot);
+                        log.info("Oppdatert lastRun for bot '{}'", bot.getName());
+
+                    }, error -> {
+                        log.error("Feil ved henting av sportsdata for bot '{}': {}", bot.getName(), error.getMessage());
+                    });
+        }
     }
 }
