@@ -1,8 +1,8 @@
 package com.AiPortal.repository;
 
-import com.AiPortal.entity.TeamStatistics;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import com.AiPortal.entity.TeamStatistics;
 
 import java.util.Optional;
 
