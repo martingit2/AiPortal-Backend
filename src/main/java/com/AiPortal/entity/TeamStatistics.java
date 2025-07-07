@@ -44,8 +44,6 @@ public class TeamStatistics {
     }
 
     // Getters and Setters
-    // Du kan generere disse automatisk i IntelliJ (Alt + Insert -> Getters and Setters)
-    // eller bruke Lombok-annotasjoner som @Getter og @Setter.
 
     public Long getId() {
         return id;

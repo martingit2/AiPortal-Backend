@@ -10,105 +10,50 @@ import java.time.Instant;
 @Table(name = "fixtures")
 public class Fixture {
 
-    @Id // Vi bruker API-ets ID, ikke en autogenerert en, for å unngå duplikater.
+    @Id
     private Long id;
 
+    // Endret til wrapper-klasser for å kunne håndtere 'null'
     @Column(nullable = false)
-    private int leagueId;
+    private Integer leagueId;
 
     @Column(nullable = false)
-    private int season;
+    private Integer season;
 
     @Column(nullable = false)
     private Instant date;
 
     private String status;
 
-    // Hjemmelag
     @Column(nullable = false)
-    private int homeTeamId;
+    private Integer homeTeamId;
 
     @Column(nullable = false)
     private String homeTeamName;
 
-    // Bortelag
     @Column(nullable = false)
-    private int awayTeamId;
+    private Integer awayTeamId;
 
     @Column(nullable = false)
     private String awayTeamName;
 
-    // Getters and Setters (generert i IDE eller med Lombok)
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public int getLeagueId() {
-        return leagueId;
-    }
-
-    public void setLeagueId(int leagueId) {
-        this.leagueId = leagueId;
-    }
-
-    public int getSeason() {
-        return season;
-    }
-
-    public void setSeason(int season) {
-        this.season = season;
-    }
-
-    public Instant getDate() {
-        return date;
-    }
-
-    public void setDate(Instant date) {
-        this.date = date;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public void setStatus(String status) {
-        this.status = status;
-    }
-
-    public int getHomeTeamId() {
-        return homeTeamId;
-    }
-
-    public void setHomeTeamId(int homeTeamId) {
-        this.homeTeamId = homeTeamId;
-    }
-
-    public String getHomeTeamName() {
-        return homeTeamName;
-    }
-
-    public void setHomeTeamName(String homeTeamName) {
-        this.homeTeamName = homeTeamName;
-    }
-
-    public int getAwayTeamId() {
-        return awayTeamId;
-    }
-
-    public void setAwayTeamId(int awayTeamId) {
-        this.awayTeamId = awayTeamId;
-    }
-
-    public String getAwayTeamName() {
-        return awayTeamName;
-    }
-
-    public void setAwayTeamName(String awayTeamName) {
-        this.awayTeamName = awayTeamName;
-    }
+    // Getters and Setters for de nye typene
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+    public Integer getLeagueId() { return leagueId; }
+    public void setLeagueId(Integer leagueId) { this.leagueId = leagueId; }
+    public Integer getSeason() { return season; }
+    public void setSeason(Integer season) { this.season = season; }
+    public Instant getDate() { return date; }
+    public void setDate(Instant date) { this.date = date; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Integer getHomeTeamId() { return homeTeamId; }
+    public void setHomeTeamId(Integer homeTeamId) { this.homeTeamId = homeTeamId; }
+    public String getHomeTeamName() { return homeTeamName; }
+    public void setHomeTeamName(String homeTeamName) { this.homeTeamName = homeTeamName; }
+    public Integer getAwayTeamId() { return awayTeamId; }
+    public void setAwayTeamId(Integer awayTeamId) { this.awayTeamId = awayTeamId; }
+    public String getAwayTeamName() { return awayTeamName; }
+    public void setAwayTeamName(String awayTeamName) { this.awayTeamName = awayTeamName; }
 }

@@ -33,8 +33,7 @@ public class TeamStatisticsDto {
         this.sourceBotName = sourceBotName;
     }
 
-    // Getters and Setters...
-    // (Generer disse med Alt+Insert i IntelliJ)
+    // Getters and Setters
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

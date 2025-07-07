@@ -1,28 +1,45 @@
 package com.AiPortal.service;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.ExchangeStrategies; // <-- NY IMPORT
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
+
+import java.time.Duration;
 
 @Service
 public class FootballApiService {
 
     private final WebClient webClient;
+    private static final Duration API_TIMEOUT = Duration.ofSeconds(30);
 
     public FootballApiService(@Value("${rapidapi.key}") String apiKey,
                               @Value("${rapidapi.host.football}") String apiHost) {
+
+        // Definer en strategi for å øke bufferstørrelsen
+        final int bufferSize = 16 * 1024 * 1024; // 16 MB, en veldig generøs grense
+
+        final ExchangeStrategies strategies = ExchangeStrategies.builder()
+                .codecs(codecs -> codecs
+                        .defaultCodecs()
+                        .maxInMemorySize(bufferSize))
+                .build();
+
+        // Bygg WebClient med den nye strategien
         this.webClient = WebClient.builder()
+                .exchangeStrategies(strategies) // <-- LEGG TIL DENNE
                 .baseUrl("https://" + apiHost + "/v3")
                 .defaultHeader("x-rapidapi-key", apiKey)
                 .defaultHeader("x-rapidapi-host", apiHost)
                 .build();
     }
 
-    /**
-     * Henter team-statistikk for en gitt liga, sesong og lag.
-     */
-    public Mono<String> getTeamStatistics(String leagueId, String season, String teamId) {
+    // ... resten av metodene (getTeamStatistics, getOddsByDate, etc.) forblir helt uendret ...
+    public Mono<ResponseEntity<String>> getTeamStatistics(String leagueId, String season, String teamId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/teams/statistics")
@@ -31,39 +48,34 @@ public class FootballApiService {
                         .queryParam("team", teamId)
                         .build())
                 .retrieve()
-                .bodyToMono(String.class);
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
     }
 
-    /**
-     * Henter odds for alle kamper på en gitt dato.
-     */
-    public Mono<String> getOddsByDate(String date) {
+    public Mono<ResponseEntity<String>> getOddsByDate(String date) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/odds")
                         .queryParam("date", date)
                         .build())
                 .retrieve()
-                .bodyToMono(String.class);
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
     }
 
-    /**
-     * Henter listen over alle tilgjengelige bookmakere.
-     */
-    public Mono<String> getBookmakers() {
+    public Mono<ResponseEntity<String>> getBookmakers() {
         return this.webClient.get()
                 .uri("/odds/bookmakers")
                 .retrieve()
-                .bodyToMono(String.class);
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
     }
 
-    /**
-     * Henter listen over alle tilgjengelige spilltyper (bets).
-     */
-    public Mono<String> getBetTypes() {
+    public Mono<ResponseEntity<String>> getBetTypes() {
         return this.webClient.get()
                 .uri("/odds/bets")
                 .retrieve()
-                .bodyToMono(String.class);
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
     }
 }
