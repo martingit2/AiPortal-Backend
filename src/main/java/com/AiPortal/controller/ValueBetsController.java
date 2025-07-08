@@ -1,3 +1,5 @@
+// src/main/java/com/AiPortal/controller/ValueBetsController.java
+
 package com.AiPortal.controller;
 
 import com.AiPortal.dto.ValueBetDto;
@@ -6,13 +8,14 @@ import com.AiPortal.repository.FixtureRepository;
 import com.AiPortal.service.OddsCalculationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.PageRequest;
+// Fjernet PageRequest og Sort da de ikke brukes i testmodus
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Collections; // Importert for å håndtere listen
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -34,12 +37,33 @@ public class ValueBetsController {
 
     @GetMapping
     public ResponseEntity<List<ValueBetDto>> findValueBets() {
-        // Hent f.eks. de 50 første kommende kampene for analyse
-        List<Fixture> upcomingFixtures = fixtureRepository.findAll(PageRequest.of(0, 50)).getContent();
-        log.info("Fant {} kommende kamper fra databasen for analyse.", upcomingFixtures.size());
+
+        // ==================================================================
+        // === START PÅ MIDLERTIDIG TESTKODE                             ===
+        // ==================================================================
+        log.warn("!!! KJØRER I TESTMODUS: Henter én spesifikk kamp !!!");
+
+        // ERSTATT DETTE TALLET MED ID-EN TIL KAMPEN DU VIL TESTE.
+        // ID for New England Revolution vs Inter Miami er 1326523.
+        long testFixtureId = 1326523;
+        log.info("Test-modus er satt til å lete etter fixture ID: {}", testFixtureId);
+
+        // Hent kun den ene spesifikke kampen fra databasen.
+        List<Fixture> upcomingFixtures = fixtureRepository.findById(testFixtureId)
+                .map(Collections::singletonList)
+                .orElse(Collections.emptyList());
+
+        // ==================================================================
+        // === SLUTT PÅ MIDLERTIDIG TESTKODE                              ===
+        // === Når du er ferdig med testing, erstatt blokken over med:   ===
+        // === PageRequest pageRequest = PageRequest.of(0, 50, Sort.by("date").ascending());
+        // === List<Fixture> upcomingFixtures = fixtureRepository.findAll(pageRequest).getContent();
+        // ==================================================================
+
+        log.info("Fant {} kamp(er) fra databasen for analyse.", upcomingFixtures.size());
 
         if (upcomingFixtures.isEmpty()) {
-            log.warn("Ingen kommende kamper funnet i 'fixtures'-tabellen. Har odds-boten kjørt og hentet data for morgendagen?");
+            log.warn("Test-kampen med ID {} ble ikke funnet i databasen.", testFixtureId);
         }
 
         List<ValueBetDto> valueBets = upcomingFixtures.stream()
@@ -48,11 +72,15 @@ public class ValueBetsController {
                 .map(oddsCalculationService::calculateValue)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
-                // Filteret for å kun vise positive value bets er fjernet for feilsøking.
-                // .filter(bet -> bet.getValueHome() > 0.05 || bet.getValueDraw() > 0.05 || bet.getValueAway() > 0.05)
+                // Filteret er fortsatt fjernet for å se ALLE resultater, selv negative.
                 .collect(Collectors.toList());
 
         log.info("Returnerer {} value bets etter prosessering.", valueBets.size());
+
+        if (valueBets.isEmpty() && !upcomingFixtures.isEmpty()) {
+            log.warn("Kampen ble funnet, men `calculateValue` returnerte ikke et resultat. Sjekk OddsCalculationService-loggen for advarsler om manglende statistikk.");
+        }
+
         return ResponseEntity.ok(valueBets);
     }
 }

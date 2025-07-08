@@ -1,12 +1,11 @@
+// src/main/java/com/AiPortal/service/FootballApiService.java
 package com.AiPortal.service;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.ExchangeStrategies; // <-- NY IMPORT
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
@@ -20,25 +19,21 @@ public class FootballApiService {
     public FootballApiService(@Value("${rapidapi.key}") String apiKey,
                               @Value("${rapidapi.host.football}") String apiHost) {
 
-        // Definer en strategi for å øke bufferstørrelsen
-        final int bufferSize = 16 * 1024 * 1024; // 16 MB, en veldig generøs grense
-
+        final int bufferSize = 16 * 1024 * 1024; // 16 MB
         final ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(codecs -> codecs
                         .defaultCodecs()
                         .maxInMemorySize(bufferSize))
                 .build();
 
-        // Bygg WebClient med den nye strategien
         this.webClient = WebClient.builder()
-                .exchangeStrategies(strategies) // <-- LEGG TIL DENNE
+                .exchangeStrategies(strategies)
                 .baseUrl("https://" + apiHost + "/v3")
                 .defaultHeader("x-rapidapi-key", apiKey)
                 .defaultHeader("x-rapidapi-host", apiHost)
                 .build();
     }
 
-    // ... resten av metodene (getTeamStatistics, getOddsByDate, etc.) forblir helt uendret ...
     public Mono<ResponseEntity<String>> getTeamStatistics(String leagueId, String season, String teamId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -74,6 +69,22 @@ public class FootballApiService {
     public Mono<ResponseEntity<String>> getBetTypes() {
         return this.webClient.get()
                 .uri("/odds/bets")
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter fulle kampdetaljer for en spesifikk kamp-ID.
+     * @param fixtureId ID-en til kampen som skal hentes.
+     * @return Et Mono med ResponseEntity som inneholder JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getFixtureById(long fixtureId) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/fixtures")
+                        .queryParam("id", String.valueOf(fixtureId))
+                        .build())
                 .retrieve()
                 .toEntity(String.class)
                 .timeout(API_TIMEOUT);
