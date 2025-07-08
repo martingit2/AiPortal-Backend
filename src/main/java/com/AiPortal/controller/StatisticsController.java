@@ -1,6 +1,7 @@
+// src/main/java/com/AiPortal/controller/StatisticsController.java
 package com.AiPortal.controller;
 
-import com.AiPortal.dto.TeamStatisticsDto;
+import com.AiPortal.dto.LeagueStatsGroupDto; // <-- Ny import
 import com.AiPortal.service.StatisticsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -16,7 +17,7 @@ import java.util.List;
 @CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class StatisticsController {
 
-    private final StatisticsService statisticsService; // Bruker den nye servicen
+    private final StatisticsService statisticsService;
 
     @Autowired
     public StatisticsController(StatisticsService statisticsService) {
@@ -24,12 +25,12 @@ public class StatisticsController {
     }
 
     /**
-     * Henter all lagret lagstatistikk som DTOs.
-     * @return En liste med TeamStatisticsDto.
+     * Henter all lagret lagstatistikk gruppert etter liga og sesong.
+     * @return En liste med LeagueStatsGroupDto.
      */
-    @GetMapping("/teams")
-    public ResponseEntity<List<TeamStatisticsDto>> getAllTeamStatistics() {
-        List<TeamStatisticsDto> allStatsDto = statisticsService.getAllTeamStatistics();
-        return ResponseEntity.ok(allStatsDto);
+    @GetMapping("/teams/grouped") // Endret URL for å ikke brekke gammel funksjonalitet
+    public ResponseEntity<List<LeagueStatsGroupDto>> getGroupedTeamStatistics() {
+        List<LeagueStatsGroupDto> groupedStats = statisticsService.getGroupedTeamStatistics();
+        return ResponseEntity.ok(groupedStats);
     }
 }

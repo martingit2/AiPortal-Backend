@@ -1,3 +1,5 @@
+// src/main/java/com/AiPortal/entity/BotConfiguration.java
+
 package com.AiPortal.entity;
 
 import jakarta.persistence.*;
@@ -16,7 +18,7 @@ public class BotConfiguration {
 
     @Enumerated(EnumType.STRING) // Lagrer enum-verdien som tekst (lesbart)
     @Column(nullable = false)
-    private SourceType sourceType; // F.eks. TWITTER, STOCK_API
+    private SourceType sourceType; // F.eks. TWITTER, SPORT_API
 
     @Column(nullable = false)
     private String sourceIdentifier; // F.eks. "FabrizioRomano" for Twitter, "TSLA" for aksje
@@ -33,7 +35,8 @@ public class BotConfiguration {
     // Enums for å definere typer og statuser
     public enum SourceType {
         TWITTER,
-        SPORT_API,
+        SPORT_API,         // Den gamle typen for ett enkelt lag
+        LEAGUE_STATS,      // <-- NY TYPE: For å hente stats for en hel liga
         STOCK_API,
         CRYPTO_API
     }
@@ -44,7 +47,7 @@ public class BotConfiguration {
         ERROR
     }
 
-    // Getters and Setters (du kan også bruke Lombok @Data for å slippe dette)
+    // Getters and Setters
 
     public Long getId() {
         return id;

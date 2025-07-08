@@ -1,3 +1,5 @@
+// src/main/java/com/AiPortal/controller/AdminController.java
+
 package com.AiPortal.controller;
 
 import com.AiPortal.service.ScheduledBotRunner;
@@ -44,5 +46,15 @@ public class AdminController {
     public ResponseEntity<String> runOddsBot() {
         scheduledBotRunner.fetchDailyOdds();
         return ResponseEntity.ok("Odds-bot kjøring manuelt utløst.");
+    }
+
+    /**
+     * NYTT ENDEPUNKT: Trigger den nye liga-statistikk-innsamleren.
+     * @return En bekreftelse på at jobben er startet.
+     */
+    @PostMapping("/run-league-stats-collector")
+    public ResponseEntity<String> runLeagueStatsCollector() {
+        scheduledBotRunner.runLeagueStatsCollector();
+        return ResponseEntity.ok("Liga-statistikk-innsamler kjøring manuelt utløst.");
     }
 }

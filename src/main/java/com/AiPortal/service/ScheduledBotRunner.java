@@ -1,4 +1,5 @@
 // src/main/java/com/AiPortal/service/ScheduledBotRunner.java
+
 package com.AiPortal.service;
 
 import com.AiPortal.entity.*;
@@ -7,6 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +33,6 @@ public class ScheduledBotRunner {
 
     private final BotConfigurationService botConfigService;
     private final BotConfigurationRepository botConfigRepository;
-    // ... andre repositories og tjenester
     private final TwitterService twitterService;
     private final RawTweetDataRepository tweetRepository;
     private final TwitterQueryStateRepository queryStateRepository;
@@ -42,18 +44,7 @@ public class ScheduledBotRunner {
     private final BetTypeRepository betTypeRepository;
     private final ObjectMapper objectMapper;
 
-    public ScheduledBotRunner(BotConfigurationService botConfigService,
-                              BotConfigurationRepository botConfigRepository,
-                              TwitterService twitterService,
-                              RawTweetDataRepository tweetRepository,
-                              TwitterQueryStateRepository queryStateRepository,
-                              FootballApiService footballApiService,
-                              TeamStatisticsRepository statsRepository,
-                              FixtureRepository fixtureRepository,
-                              MatchOddsRepository matchOddsRepository,
-                              BookmakerRepository bookmakerRepository,
-                              BetTypeRepository betTypeRepository,
-                              ObjectMapper objectMapper) {
+    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterService twitterService, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, ObjectMapper objectMapper) {
         this.botConfigService = botConfigService;
         this.botConfigRepository = botConfigRepository;
         this.twitterService = twitterService;
@@ -68,11 +59,9 @@ public class ScheduledBotRunner {
         this.objectMapper = objectMapper;
     }
 
-    // ... runTwitterSearchBot() og updateFootballMetadata() er uendret ...
     @Scheduled(fixedRate = 960000, initialDelay = 60000)
     @Transactional
     public void runTwitterSearchBot() {
-        // ... (uendret)
         log.info("--- Starter planlagt Twitter-søk ---");
         List<BotConfiguration> activeTwitterBots = botConfigService.getAllBotsByStatusAndType(
                 BotConfiguration.BotStatus.ACTIVE,
@@ -157,81 +146,9 @@ public class ScheduledBotRunner {
                 });
     }
 
-
-    @Scheduled(fixedRate = 600000, initialDelay = 120000)
-    @Transactional
-    public void runSportDataBots() {
-        log.info("--- Starter planlagt kjøring av sportsdata-boter ---");
-        List<BotConfiguration> activeSportBots = botConfigService.getAllBotsByStatusAndType(
-                BotConfiguration.BotStatus.ACTIVE,
-                BotConfiguration.SourceType.SPORT_API
-        );
-
-        if (activeSportBots.isEmpty()) {
-            log.info("Ingen aktive sportsdata-boter funnet.");
-            return;
-        }
-
-        for (BotConfiguration bot : activeSportBots) {
-            log.info("Kjører sports-bot: '{}' med kilde: {}", bot.getName(), bot.getSourceIdentifier());
-
-            String[] params = bot.getSourceIdentifier().split(":");
-            if (params.length != 3) {
-                log.error("Ugyldig sourceIdentifier for sport-bot {}: {}. Forventet format: 'ligaId:sesong:lagId'", bot.getId(), bot.getSourceIdentifier());
-                continue;
-            }
-            String leagueIdStr = params[0], seasonStr = params[1], teamIdStr = params[2];
-
-            footballApiService.getTeamStatistics(leagueIdStr, seasonStr, teamIdStr)
-                    .subscribe(responseEntity -> {
-                        String responseJson = responseEntity.getBody();
-                        try {
-                            JsonNode root = objectMapper.readTree(responseJson);
-                            JsonNode response = root.path("response");
-                            if (response.isMissingNode() || !response.isObject() || response.size() == 0) {
-                                log.warn("Mottok ugyldig eller tomt 'response'-objekt for bot '{}'. Svar: {}", bot.getName(), responseJson);
-                                return;
-                            }
-                            int teamId = response.path("team").path("id").asInt();
-                            int leagueId = response.path("league").path("id").asInt();
-                            int season = response.path("league").path("season").asInt();
-
-                            TeamStatistics stats = statsRepository.findByLeagueIdAndSeasonAndTeamId(leagueId, season, teamId)
-                                    .orElse(new TeamStatistics());
-                            stats.setTeamId(teamId);
-                            stats.setLeagueId(leagueId);
-                            stats.setSeason(season);
-                            stats.setTeamName(response.path("team").path("name").asText());
-                            stats.setLeagueName(response.path("league").path("name").asText());
-                            stats.setPlayedTotal(response.path("fixtures").path("played").path("total").asInt());
-                            stats.setWinsTotal(response.path("fixtures").path("wins").path("total").asInt());
-                            stats.setDrawsTotal(response.path("fixtures").path("draws").path("total").asInt());
-                            stats.setLossesTotal(response.path("fixtures").path("loses").path("total").asInt());
-
-                            // ---- START PÅ ENDELIG FIKS ----
-                            // Korrekt parsing av nestet målstatistikk
-                            stats.setGoalsForTotal(response.path("goals").path("for").path("total").path("total").asInt());
-                            stats.setGoalsAgainstTotal(response.path("goals").path("against").path("total").path("total").asInt());
-                            // ---- SLUTT PÅ ENDELIG FIKS ----
-
-                            stats.setCleanSheetTotal(response.path("clean_sheet").path("total").asInt());
-                            stats.setFailedToScoreTotal(response.path("failed_to_score").path("total").asInt());
-                            stats.setSourceBot(bot);
-                            stats.setLastUpdated(Instant.now());
-                            statsRepository.save(stats);
-                            log.info("Lagret/oppdatert statistikk for team: {}", stats.getTeamName());
-                            bot.setLastRun(Instant.now());
-                            botConfigRepository.save(bot);
-                            log.info("Oppdatert lastRun for bot '{}'", bot.getName());
-                        } catch (Exception e) { log.error("Feil ved parsing av sportsdata for bot '{}'", bot.getName(), e); }
-                    }, error -> log.error("Feil ved henting av sportsdata for bot '{}'", bot.getName(), error));
-        }
-    }
-
     @Scheduled(cron = "0 0 5 * * *", zone = "Europe/Oslo")
     @Transactional
     public void updateFootballMetadata() {
-        // ... (uendret)
         log.info("--- Starter planlagt jobb for å oppdatere fotball-metadata (Bookmakere, Spilltyper) ---");
         footballApiService.getBookmakers().subscribe(responseEntity -> {
             try {
@@ -267,7 +184,6 @@ public class ScheduledBotRunner {
 
     @Scheduled(cron = "0 0 1 * * *", zone = "Europe/Oslo")
     public void fetchDailyOdds() {
-        // ... (denne metoden er nå korrekt og uendret)
         String tomorrow = LocalDate.now().plusDays(1).toString();
         log.info("--- Starter planlagt jobb for å hente odds for dato: {} ---", tomorrow);
 
@@ -311,7 +227,6 @@ public class ScheduledBotRunner {
     }
 
     private Mono<Fixture> processSingleFixtureWithOdds(JsonNode oddsResponse) {
-        // ... (denne metoden er nå korrekt og uendret)
         long fixtureId = oddsResponse.path("fixture").path("id").asLong();
 
         JsonNode initialHomeNode = oddsResponse.path("teams").path("home");
@@ -351,7 +266,6 @@ public class ScheduledBotRunner {
 
     @Transactional
     public Fixture saveFixtureAndOdds(JsonNode oddsData, JsonNode fixtureData) {
-        // ... (denne metoden er nå korrekt og uendret)
         long fixtureId = fixtureData.path("fixture").path("id").asLong();
 
         Fixture fixture = fixtureRepository.findById(fixtureId).orElse(new Fixture());
@@ -395,7 +309,179 @@ public class ScheduledBotRunner {
 
     @Transactional
     public Fixture saveFixtureAndOdds(JsonNode allData) {
-        // ... (denne metoden er nå korrekt og uendret)
         return saveFixtureAndOdds(allData, allData);
+    }
+
+    /**
+     * Kjører for boter av typen SPORT_API (enkelt-lag).
+     */
+    @Scheduled(fixedRate = 600000, initialDelay = 120000)
+    public void runSportDataBots() {
+        log.info("--- Starter planlagt kjøring av sportsdata-boter (enkelt-lag) ---");
+
+        List<BotConfiguration> activeSportBots = botConfigService.getAllBotsByStatusAndType(
+                BotConfiguration.BotStatus.ACTIVE,
+                BotConfiguration.SourceType.SPORT_API
+        );
+
+        if (activeSportBots.isEmpty()) {
+            log.info("Ingen aktive SPORT_API-boter funnet.");
+            return;
+        }
+
+        for (BotConfiguration bot : activeSportBots) {
+            log.info("Kjører SPORT_API-bot: '{}' med kilde: {}", bot.getName(), bot.getSourceIdentifier());
+
+            String[] params = bot.getSourceIdentifier().split(":");
+            if (params.length != 3) {
+                log.error("Ugyldig sourceIdentifier for sport-bot {}: {}. Forventet format: 'ligaId:sesong:lagId'", bot.getId(), bot.getSourceIdentifier());
+                continue;
+            }
+            String leagueIdStr = params[0], seasonStr = params[1], teamIdStr = params[2];
+
+            footballApiService.getTeamStatistics(leagueIdStr, seasonStr, teamIdStr)
+                    .subscribe(responseEntity -> {
+                        try {
+                            String responseJson = responseEntity.getBody();
+                            if (responseJson != null) {
+                                JsonNode root = objectMapper.readTree(responseJson);
+                                JsonNode response = root.path("response");
+                                saveTeamStatistics(response, bot);
+                            }
+                        } catch (Exception e) {
+                            log.error("Feil ved parsing av sportsdata for bot '{}'", bot.getName(), e);
+                        }
+                    }, error -> log.error("Feil ved henting av sportsdata for bot '{}'", bot.getName(), error));
+        }
+    }
+
+    /**
+     * Henter statistikk for en hel liga.
+     * Denne metoden er @Async for å kjøre i en egen tråd og ikke blokkere web-forespørsler.
+     * Den bruker en enkel for-løkke med innebygd pause for å håndtere API rate-limiting.
+     */
+    @Async
+    @Scheduled(fixedRate = 86400000, initialDelay = 180000)
+    public void runLeagueStatsCollector() {
+        log.info("--- Starter planlagt kjøring av liga-statistikk-innsamler ---");
+        List<BotConfiguration> leagueBots = botConfigService.getAllBotsByStatusAndType(
+                BotConfiguration.BotStatus.ACTIVE,
+                BotConfiguration.SourceType.LEAGUE_STATS
+        );
+
+        if (leagueBots.isEmpty()) {
+            log.info("Ingen aktive LEAGUE_STATS-boter funnet.");
+            return;
+        }
+
+        for (BotConfiguration bot : leagueBots) {
+            String[] params = bot.getSourceIdentifier().split(":");
+            if (params.length != 2) {
+                log.error("Ugyldig sourceIdentifier for LEAGUE_STATS-bot {}: {}. Forventet format: 'ligaId:sesong'", bot.getId(), bot.getSourceIdentifier());
+                continue;
+            }
+            String leagueId = params[0];
+            String season = params[1];
+            log.info("Starter innsamling for liga: {}, sesong: {} (fra bot: '{}')", leagueId, season, bot.getName());
+
+            try {
+                // Steg 1: Hent listen av lag i ligaen (blokkerende kall)
+                ResponseEntity<String> teamsResponse = footballApiService.getTeamsInLeague(leagueId, season).block();
+                if (teamsResponse == null || !teamsResponse.getStatusCode().is2xxSuccessful() || teamsResponse.getBody() == null) {
+                    log.error("Kunne ikke hente lagliste for liga {}.", leagueId);
+                    continue;
+                }
+
+                JsonNode teamsArray = objectMapper.readTree(teamsResponse.getBody()).path("response");
+                if (!teamsArray.isArray() || teamsArray.isEmpty()) {
+                    log.warn("Fant ingen lag for liga {} sesong {}.", leagueId, season);
+                    continue;
+                }
+
+                log.info("Fant {} lag for liga {}. Starter henting av statistikk for hvert lag...", teamsArray.size(), leagueId);
+
+                // Steg 2: Loop gjennom hvert lag med en innebygd pause
+                for (JsonNode teamNode : teamsArray) {
+                    String teamId = teamNode.path("team").path("id").asText();
+
+                    try {
+                        // Hent statistikk for dette ene laget (blokkerende kall)
+                        ResponseEntity<String> statsResponse = footballApiService.getTeamStatistics(leagueId, season, teamId).block();
+                        if (statsResponse != null && statsResponse.getBody() != null) {
+                            JsonNode response = objectMapper.readTree(statsResponse.getBody()).path("response");
+                            saveTeamStatistics(response, bot);
+                        }
+
+                        // Pause for å respektere rate limits. 2.5 sekunder er trygt for 30 kall/minutt.
+                        Thread.sleep(2500);
+
+                    } catch (WebClientResponseException e) {
+                        if (e.getStatusCode().value() == 429) {
+                            log.error("Rate limit truffet for team {}. Venter 60 sekunder før fortsettelse.", teamId);
+                            Thread.sleep(60000);
+                        } else {
+                            log.error("API-feil (status: {}) ved henting av stats for team {}: {}", e.getStatusCode(), teamId, e.getResponseBodyAsString());
+                        }
+                    } catch (InterruptedException e) {
+                        log.warn("Tråden ble avbrutt under pause. Avslutter innsamling for denne ligaen.");
+                        Thread.currentThread().interrupt();
+                        break;
+                    } catch (Exception e) {
+                        log.error("Uventet feil ved prosessering av team {}", teamId, e);
+                    }
+                }
+
+                log.info("Fullførte innsamling for alle lag i liga {}.", leagueId);
+                bot.setLastRun(Instant.now());
+                botConfigRepository.save(bot);
+
+            } catch (Exception e) {
+                log.error("En kritisk feil oppstod under innsamling for liga {}", leagueId, e);
+            }
+        }
+    }
+
+    /**
+     * Hjelpemetode for å lagre TeamStatistics. Gjenbrukes av både enkelt-lag og liga-boter.
+     * Denne metoden er @Transactional for å sikre atomiske databaseoperasjoner.
+     */
+    @Transactional
+    public void saveTeamStatistics(JsonNode statsResponse, BotConfiguration sourceBot) {
+        if (statsResponse.isMissingNode() || !statsResponse.isObject() || statsResponse.size() == 0) {
+            log.warn("Mottok tomt eller ugyldig statsResponse-objekt. Hopper over lagring.");
+            return;
+        }
+        int teamId = statsResponse.path("team").path("id").asInt();
+        int leagueId = statsResponse.path("league").path("id").asInt();
+        int season = statsResponse.path("league").path("season").asInt();
+
+        TeamStatistics stats = statsRepository.findByLeagueIdAndSeasonAndTeamId(leagueId, season, teamId)
+                .orElse(new TeamStatistics());
+
+        stats.setTeamId(teamId);
+        stats.setLeagueId(leagueId);
+        stats.setSeason(season);
+        stats.setTeamName(statsResponse.path("team").path("name").asText());
+        stats.setLeagueName(statsResponse.path("league").path("name").asText());
+        stats.setPlayedTotal(statsResponse.path("fixtures").path("played").path("total").asInt());
+        stats.setWinsTotal(statsResponse.path("fixtures").path("wins").path("total").asInt());
+        stats.setDrawsTotal(statsResponse.path("fixtures").path("draws").path("total").asInt());
+        stats.setLossesTotal(statsResponse.path("fixtures").path("loses").path("total").asInt());
+        stats.setGoalsForTotal(statsResponse.path("goals").path("for").path("total").path("total").asInt());
+        stats.setGoalsAgainstTotal(statsResponse.path("goals").path("against").path("total").path("total").asInt());
+        stats.setCleanSheetTotal(statsResponse.path("clean_sheet").path("total").asInt());
+        stats.setFailedToScoreTotal(statsResponse.path("failed_to_score").path("total").asInt());
+        stats.setSourceBot(sourceBot);
+        stats.setLastUpdated(Instant.now());
+
+        statsRepository.save(stats);
+        log.info("Lagret/oppdatert statistikk for team: {} (ID: {})", stats.getTeamName(), stats.getTeamId());
+
+        // Oppdaterer kun lastRun for den originale enkelt-lag boten
+        if (sourceBot != null && sourceBot.getSourceType() == BotConfiguration.SourceType.SPORT_API) {
+            sourceBot.setLastRun(Instant.now());
+            botConfigRepository.save(sourceBot);
+            log.info("Oppdatert lastRun for enkelt-lag-bot '{}'", sourceBot.getName());
+        }
     }
 }

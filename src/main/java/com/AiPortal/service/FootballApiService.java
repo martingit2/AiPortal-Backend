@@ -1,4 +1,5 @@
 // src/main/java/com/AiPortal/service/FootballApiService.java
+
 package com.AiPortal.service;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -74,16 +75,29 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * NY METODE: Henter fulle kampdetaljer for en spesifikk kamp-ID.
-     * @param fixtureId ID-en til kampen som skal hentes.
-     * @return Et Mono med ResponseEntity som inneholder JSON-svaret.
-     */
     public Mono<ResponseEntity<String>> getFixtureById(long fixtureId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/fixtures")
                         .queryParam("id", String.valueOf(fixtureId))
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter en liste over alle lag for en gitt liga og sesong.
+     * @param leagueId ID-en til ligaen.
+     * @param season Årstallet for sesongen.
+     * @return Et Mono med JSON-svaret som inneholder laglisten.
+     */
+    public Mono<ResponseEntity<String>> getTeamsInLeague(String leagueId, String season) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/teams")
+                        .queryParam("league", leagueId)
+                        .queryParam("season", season)
                         .build())
                 .retrieve()
                 .toEntity(String.class)
