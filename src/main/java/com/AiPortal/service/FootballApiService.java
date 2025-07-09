@@ -98,12 +98,6 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * NY METODE: Henter alle kamper for en gitt liga og sesong.
-     * @param leagueId ID-en til ligaen.
-     * @param season Årstallet for sesongen.
-     * @return Et Mono med JSON-svaret.
-     */
     public Mono<ResponseEntity<String>> getFixturesByLeagueAndSeason(String leagueId, String season) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -116,16 +110,28 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * NY METODE: Henter detaljert statistikk for en enkelt kamp.
-     * @param fixtureId ID-en til kampen.
-     * @return Et Mono med JSON-svaret.
-     */
     public Mono<ResponseEntity<String>> getStatisticsForFixture(Long fixtureId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/fixtures/statistics")
                         .queryParam("fixture", String.valueOf(fixtureId))
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter basisinformasjon for ett enkelt lag, basert på ID.
+     * Brukes for å slå opp lagnavn på en robust måte.
+     * @param teamId ID-en til laget.
+     * @return Et Mono med JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getTeamById(Integer teamId) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/teams")
+                        .queryParam("id", String.valueOf(teamId))
                         .build())
                 .retrieve()
                 .toEntity(String.class)

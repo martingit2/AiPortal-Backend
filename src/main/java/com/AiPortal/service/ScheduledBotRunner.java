@@ -285,6 +285,14 @@ public class ScheduledBotRunner {
         fixture.setAwayTeamId(fixtureData.path("teams").path("away").path("id").asInt());
         fixture.setAwayTeamName(fixtureData.path("teams").path("away").path("name").asText());
 
+        JsonNode goalsNode = fixtureData.path("goals");
+        if (!goalsNode.path("home").isNull()) {
+            fixture.setGoalsHome(goalsNode.path("home").asInt());
+        }
+        if (!goalsNode.path("away").isNull()) {
+            fixture.setGoalsAway(goalsNode.path("away").asInt());
+        }
+
         Fixture savedFixture = fixtureRepository.save(fixture);
 
         JsonNode bookmakers = oddsData.path("bookmakers");
@@ -472,10 +480,28 @@ public class ScheduledBotRunner {
                     continue;
                 }
 
-                log.info("---[HISTORICAL COLLECTOR]--- Fant {} kamper. Starter innsamling av statistikk for hver kamp...", fixturesArray.size());
+                int newFixturesCount = 0;
+                for (JsonNode fixtureNode : fixturesArray) {
+                    boolean wasUpdated = saveOrUpdateFixtureFromJson(fixtureNode);
+                    if (wasUpdated) {
+                        newFixturesCount++;
+                    }
+                }
+                if (newFixturesCount > 0) {
+                    log.info("---[HISTORICAL COLLECTOR]--- Lagret/oppdatert {} kamper i databasen for liga {}.", newFixturesCount, leagueId);
+                } else {
+                    log.info("---[HISTORICAL COLLECTOR]--- Alle {} kamper for liga {} fantes allerede i databasen.", fixturesArray.size(), leagueId);
+                }
+
+                log.info("---[HISTORICAL COLLECTOR]--- Starter innsamling av manglende kampstatistikk...", fixturesArray.size());
 
                 for (JsonNode fixtureNode : fixturesArray) {
                     Long fixtureId = fixtureNode.path("fixture").path("id").asLong();
+
+                    String status = fixtureNode.path("fixture").path("status").path("short").asText();
+                    if (!("FT".equals(status) || "AET".equals(status) || "PEN".equals(status))) {
+                        continue; // Hopp over kamper som ikke er ferdigspilt
+                    }
 
                     if (matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, fixtureNode.path("teams").path("home").path("id").asInt()).isPresent()) {
                         log.info("---[HISTORICAL COLLECTOR]--- Statistikk for fixture {} finnes allerede. Hopper over.", fixtureId);
@@ -493,6 +519,7 @@ public class ScheduledBotRunner {
                         log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av stats for fixture {}", fixtureId, e);
                     }
                 }
+
                 log.info("---[HISTORICAL COLLECTOR]--- Fullførte innsamling for liga {}.", leagueId);
                 bot.setStatus(BotConfiguration.BotStatus.PAUSED);
                 bot.setLastRun(Instant.now());
@@ -502,6 +529,42 @@ public class ScheduledBotRunner {
                 log.error("---[HISTORICAL COLLECTOR]--- Kritisk feil under innsamling for liga {}", leagueId, e);
             }
         }
+    }
+
+    @Transactional
+    public boolean saveOrUpdateFixtureFromJson(JsonNode fixtureNode) {
+        long fixtureId = fixtureNode.path("fixture").path("id").asLong();
+        Fixture fixture = fixtureRepository.findById(fixtureId).orElse(new Fixture());
+
+        boolean needsUpdate = false;
+
+        JsonNode goalsNode = fixtureNode.path("goals");
+        Integer goalsHome = goalsNode.path("home").isNull() ? null : goalsNode.path("home").asInt();
+        Integer goalsAway = goalsNode.path("away").isNull() ? null : goalsNode.path("away").asInt();
+
+        if (fixture.getId() == null) {
+            needsUpdate = true; // Ny fixture, må lagres
+        } else if ((goalsHome != null && !goalsHome.equals(fixture.getGoalsHome())) ||
+                (goalsAway != null && !goalsAway.equals(fixture.getGoalsAway()))) {
+            needsUpdate = true; // Eksisterende fixture, men resultat mangler/er annerledes
+        }
+
+        if (needsUpdate) {
+            fixture.setId(fixtureId);
+            fixture.setLeagueId(fixtureNode.path("league").path("id").asInt());
+            fixture.setSeason(fixtureNode.path("league").path("season").asInt());
+            fixture.setDate(Instant.parse(fixtureNode.path("fixture").path("date").asText()));
+            fixture.setStatus(fixtureNode.path("fixture").path("status").path("short").asText());
+            fixture.setHomeTeamId(fixtureNode.path("teams").path("home").path("id").asInt());
+            fixture.setHomeTeamName(fixtureNode.path("teams").path("home").path("name").asText());
+            fixture.setAwayTeamId(fixtureNode.path("teams").path("away").path("id").asInt());
+            fixture.setAwayTeamName(fixtureNode.path("teams").path("away").path("name").asText());
+            fixture.setGoalsHome(goalsHome);
+            fixture.setGoalsAway(goalsAway);
+            fixtureRepository.save(fixture);
+        }
+
+        return needsUpdate;
     }
 
     @Transactional

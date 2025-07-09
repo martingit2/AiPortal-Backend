@@ -14,8 +14,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+/**
+ * Service-lag for å håndtere logikk relatert til statistikk.
+ */
 @Service
 @Transactional(readOnly = true)
 public class StatisticsService {
@@ -29,6 +33,10 @@ public class StatisticsService {
         this.matchStatisticsRepository = matchStatisticsRepository;
     }
 
+    /**
+     * Henter all lagret lagstatistikk og returnerer den gruppert etter liga og sesong.
+     * @return En liste av LeagueStatsGroupDto-objekter.
+     */
     public List<LeagueStatsGroupDto> getGroupedTeamStatistics() {
         List<TeamStatistics> allStats = teamStatisticsRepository.findAll();
 
@@ -43,6 +51,11 @@ public class StatisticsService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Henter detaljert kampstatistikk for begge lag i en gitt kamp.
+     * @param fixtureId ID-en til kampen.
+     * @return En liste som inneholder DTOer for hjemme- og bortelagets statistikk.
+     */
     public List<MatchStatisticsDto> getStatisticsForFixture(Long fixtureId) {
         List<MatchStatistics> stats = matchStatisticsRepository.findAllByFixtureId(fixtureId);
 
@@ -51,10 +64,20 @@ public class StatisticsService {
                 .collect(Collectors.toList());
     }
 
-    // ---- START PÅ OPPDATERT HJELPEMETODE ----
+    /**
+     * Henter den generelle statistikk-DTOen for ett enkelt lag.
+     * Brukes for å slå opp lagnavn og annen generell info.
+     * @param teamId ID-en til laget.
+     * @return En Optional som inneholder TeamStatisticsDto hvis laget finnes.
+     */
+    public Optional<TeamStatisticsDto> getTeamInfo(Integer teamId) {
+        return teamStatisticsRepository.findTopByTeamId(teamId)
+                .map(this::convertToDto);
+    }
+
     /**
      * Hjelpemetode for å konvertere en TeamStatistics-entitet til en TeamStatisticsDto.
-     * Den inkluderer nå den faktiske teamId for navigering i frontend.
+     * Inkluderer nå den faktiske teamId for navigering i frontend.
      */
     private TeamStatisticsDto convertToDto(TeamStatistics stats) {
         return new TeamStatisticsDto(
@@ -73,7 +96,9 @@ public class StatisticsService {
         );
     }
 
-
+    /**
+     * Hjelpemetode for å konvertere en MatchStatistics-entitet til en MatchStatisticsDto.
+     */
     private MatchStatisticsDto convertMatchStatsToDto(MatchStatistics stats) {
         String teamName = teamStatisticsRepository.findTopByTeamId(stats.getTeamId())
                 .map(TeamStatistics::getTeamName)

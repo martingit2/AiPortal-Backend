@@ -1,3 +1,5 @@
+// src/main/java/com/AiPortal/entity/Fixture.java
+
 package com.AiPortal.entity;
 
 import jakarta.persistence.Column;
@@ -13,7 +15,6 @@ public class Fixture {
     @Id
     private Long id;
 
-    // Endret til wrapper-klasser for å kunne håndtere 'null'
     @Column(nullable = false)
     private Integer leagueId;
 
@@ -37,7 +38,12 @@ public class Fixture {
     @Column(nullable = false)
     private String awayTeamName;
 
-    // Getters and Setters for de nye typene
+    // ---- NYE FELTER FOR KAMPENS RESULTAT ----
+    private Integer goalsHome;
+    private Integer goalsAway;
+
+    // Getters and Setters
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public Integer getLeagueId() { return leagueId; }
@@ -56,4 +62,10 @@ public class Fixture {
     public void setAwayTeamId(Integer awayTeamId) { this.awayTeamId = awayTeamId; }
     public String getAwayTeamName() { return awayTeamName; }
     public void setAwayTeamName(String awayTeamName) { this.awayTeamName = awayTeamName; }
+
+    // ---- NYE GETTERS OG SETTERS FOR MÅL ----
+    public Integer getGoalsHome() { return goalsHome; }
+    public void setGoalsHome(Integer goalsHome) { this.goalsHome = goalsHome; }
+    public Integer getGoalsAway() { return goalsAway; }
+    public void setGoalsAway(Integer goalsAway) { this.goalsAway = goalsAway; }
 }

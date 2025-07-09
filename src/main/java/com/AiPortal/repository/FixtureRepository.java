@@ -8,14 +8,13 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.Optional; // Beholder denne fra før
 
 @Repository
 public interface FixtureRepository extends JpaRepository<Fixture, Long> {
 
     /**
-     * NY OG FORBEDRET METODE: Finner alle kamper for et gitt lag i en gitt sesong,
-     * sortert etter dato. Bruker navngitte parametere for robusthet.
+     * NY METODE: Finner alle kamper for et gitt lag i en gitt sesong,
+     * sortert etter dato.
      * @param teamId ID-en til laget.
      * @param season Årstallet for sesongen.
      * @return En liste med Fixture-entiteter.
