@@ -1,8 +1,10 @@
+// src/main/java/com/AiPortal/dto/TeamStatisticsDto.java
 package com.AiPortal.dto;
 
 public class TeamStatisticsDto {
 
     private Long id;
+    private Integer teamId;
     private String teamName;
     private String leagueName;
     private int season;
@@ -19,8 +21,9 @@ public class TeamStatisticsDto {
     }
 
     // Konstruktør for enkel mapping
-    public TeamStatisticsDto(Long id, String teamName, String leagueName, int season, int playedTotal, int winsTotal, int drawsTotal, int lossesTotal, int goalsForTotal, int goalsAgainstTotal, String sourceBotName) {
+    public TeamStatisticsDto(Long id, Integer teamId, String teamName, String leagueName, int season, int playedTotal, int winsTotal, int drawsTotal, int lossesTotal, int goalsForTotal, int goalsAgainstTotal, String sourceBotName) {
         this.id = id;
+        this.teamId = teamId;
         this.teamName = teamName;
         this.leagueName = leagueName;
         this.season = season;
@@ -34,9 +37,10 @@ public class TeamStatisticsDto {
     }
 
     // Getters and Setters
-
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+    public Integer getTeamId() { return teamId; }
+    public void setTeamId(Integer teamId) { this.teamId = teamId; }
     public String getTeamName() { return teamName; }
     public void setTeamName(String teamName) { this.teamName = teamName; }
     public String getLeagueName() { return leagueName; }

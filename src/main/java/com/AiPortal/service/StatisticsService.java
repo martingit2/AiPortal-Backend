@@ -2,11 +2,13 @@
 package com.AiPortal.service;
 
 import com.AiPortal.dto.LeagueStatsGroupDto;
+import com.AiPortal.dto.MatchStatisticsDto;
 import com.AiPortal.dto.TeamStatisticsDto;
+import com.AiPortal.entity.MatchStatistics;
 import com.AiPortal.entity.TeamStatistics;
+import com.AiPortal.repository.MatchStatisticsRepository;
 import com.AiPortal.repository.TeamStatisticsRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,54 +16,50 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
-/**
- * Service-lag for å håndtere logikk relatert til statistikk.
- */
 @Service
-@Transactional(readOnly = true) // Alle metoder her er kun for lesing
+@Transactional(readOnly = true)
 public class StatisticsService {
 
-    private final TeamStatisticsRepository statsRepository;
+    private final TeamStatisticsRepository teamStatisticsRepository;
+    private final MatchStatisticsRepository matchStatisticsRepository;
 
     @Autowired
-    public StatisticsService(TeamStatisticsRepository statsRepository) {
-        this.statsRepository = statsRepository;
+    public StatisticsService(TeamStatisticsRepository teamStatisticsRepository, MatchStatisticsRepository matchStatisticsRepository) {
+        this.teamStatisticsRepository = teamStatisticsRepository;
+        this.matchStatisticsRepository = matchStatisticsRepository;
     }
 
-    /**
-     * Henter all lagret lagstatistikk og returnerer den gruppert etter liga og sesong.
-     * Gruppene er sortert med den nyeste sesongen og deretter alfabetisk på liganavn.
-     * @return En liste av LeagueStatsGroupDto-objekter.
-     */
     public List<LeagueStatsGroupDto> getGroupedTeamStatistics() {
-        // Hent all statistikk fra databasen
-        List<TeamStatistics> allStats = statsRepository.findAll();
+        List<TeamStatistics> allStats = teamStatisticsRepository.findAll();
 
-        // Grupperer statistikken ved å bruke Java Streams.
         return allStats.stream()
                 .collect(Collectors.groupingBy(
-                        // 1. Lag en grupperingsnøkkel som "Premier League - 2023"
                         stats -> stats.getLeagueName() + " - " + stats.getSeason(),
-                        // 2. For hver gruppe, konverter entitetene til DTO-er
                         Collectors.mapping(this::convertToDto, Collectors.toList())
                 ))
                 .entrySet().stream()
-                // 3. Konverter det resulterende Map-et til en liste av LeagueStatsGroupDto-objekter
                 .map(entry -> new LeagueStatsGroupDto(entry.getKey(), entry.getValue()))
-                // 4. Sorter den endelige listen av grupper for en konsistent visning i frontend
                 .sorted(Comparator.comparing(LeagueStatsGroupDto::getGroupTitle).reversed())
                 .collect(Collectors.toList());
     }
 
+    public List<MatchStatisticsDto> getStatisticsForFixture(Long fixtureId) {
+        List<MatchStatistics> stats = matchStatisticsRepository.findAllByFixtureId(fixtureId);
+
+        return stats.stream()
+                .map(this::convertMatchStatsToDto)
+                .collect(Collectors.toList());
+    }
+
+    // ---- START PÅ OPPDATERT HJELPEMETODE ----
     /**
      * Hjelpemetode for å konvertere en TeamStatistics-entitet til en TeamStatisticsDto.
-     * Dette skiller database-laget fra API-laget.
-     * @param stats Entiteten som skal konverteres.
-     * @return Den konverterte DTOen.
+     * Den inkluderer nå den faktiske teamId for navigering i frontend.
      */
     private TeamStatisticsDto convertToDto(TeamStatistics stats) {
         return new TeamStatisticsDto(
                 stats.getId(),
+                stats.getTeamId(),
                 stats.getTeamName(),
                 stats.getLeagueName(),
                 stats.getSeason(),
@@ -71,8 +69,34 @@ public class StatisticsService {
                 stats.getLossesTotal(),
                 stats.getGoalsForTotal(),
                 stats.getGoalsAgainstTotal(),
-                // Håndterer tilfellet der en bot er slettet, men statistikken gjenstår
                 stats.getSourceBot() != null ? stats.getSourceBot().getName() : "Ukjent Kilde"
+        );
+    }
+
+
+    private MatchStatisticsDto convertMatchStatsToDto(MatchStatistics stats) {
+        String teamName = teamStatisticsRepository.findTopByTeamId(stats.getTeamId())
+                .map(TeamStatistics::getTeamName)
+                .orElse("Ukjent Lag");
+
+        return new MatchStatisticsDto(
+                teamName,
+                stats.getShotsOnGoal(),
+                stats.getShotsOffGoal(),
+                stats.getTotalShots(),
+                stats.getBlockedShots(),
+                stats.getShotsInsideBox(),
+                stats.getShotsOutsideBox(),
+                stats.getFouls(),
+                stats.getCornerKicks(),
+                stats.getOffsides(),
+                stats.getBallPossession(),
+                stats.getYellowCards(),
+                stats.getRedCards(),
+                stats.getGoalkeeperSaves(),
+                stats.getTotalPasses(),
+                stats.getPassesAccurate(),
+                stats.getPassesPercentage()
         );
     }
 }

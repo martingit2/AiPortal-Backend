@@ -26,6 +26,10 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * Hovedkomponenten for å kjøre planlagte datainnhentingsjobber.
+ * Denne klassen er hjertet av den automatiske datainnsamlingen i plattformen.
+ */
 @Component
 public class ScheduledBotRunner {
 
@@ -42,9 +46,10 @@ public class ScheduledBotRunner {
     private final MatchOddsRepository matchOddsRepository;
     private final BookmakerRepository bookmakerRepository;
     private final BetTypeRepository betTypeRepository;
+    private final MatchStatisticsRepository matchStatisticsRepository;
     private final ObjectMapper objectMapper;
 
-    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterService twitterService, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, ObjectMapper objectMapper) {
+    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterService twitterService, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, ObjectMapper objectMapper) {
         this.botConfigService = botConfigService;
         this.botConfigRepository = botConfigRepository;
         this.twitterService = twitterService;
@@ -56,6 +61,7 @@ public class ScheduledBotRunner {
         this.matchOddsRepository = matchOddsRepository;
         this.bookmakerRepository = bookmakerRepository;
         this.betTypeRepository = betTypeRepository;
+        this.matchStatisticsRepository = matchStatisticsRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -312,9 +318,6 @@ public class ScheduledBotRunner {
         return saveFixtureAndOdds(allData, allData);
     }
 
-    /**
-     * Kjører for boter av typen SPORT_API (enkelt-lag).
-     */
     @Scheduled(fixedRate = 600000, initialDelay = 120000)
     public void runSportDataBots() {
         log.info("--- Starter planlagt kjøring av sportsdata-boter (enkelt-lag) ---");
@@ -355,11 +358,6 @@ public class ScheduledBotRunner {
         }
     }
 
-    /**
-     * Henter statistikk for en hel liga.
-     * Denne metoden er @Async for å kjøre i en egen tråd og ikke blokkere web-forespørsler.
-     * Den bruker en enkel for-løkke med innebygd pause for å håndtere API rate-limiting.
-     */
     @Async
     @Scheduled(fixedRate = 86400000, initialDelay = 180000)
     public void runLeagueStatsCollector() {
@@ -385,7 +383,6 @@ public class ScheduledBotRunner {
             log.info("Starter innsamling for liga: {}, sesong: {} (fra bot: '{}')", leagueId, season, bot.getName());
 
             try {
-                // Steg 1: Hent listen av lag i ligaen (blokkerende kall)
                 ResponseEntity<String> teamsResponse = footballApiService.getTeamsInLeague(leagueId, season).block();
                 if (teamsResponse == null || !teamsResponse.getStatusCode().is2xxSuccessful() || teamsResponse.getBody() == null) {
                     log.error("Kunne ikke hente lagliste for liga {}.", leagueId);
@@ -400,19 +397,16 @@ public class ScheduledBotRunner {
 
                 log.info("Fant {} lag for liga {}. Starter henting av statistikk for hvert lag...", teamsArray.size(), leagueId);
 
-                // Steg 2: Loop gjennom hvert lag med en innebygd pause
                 for (JsonNode teamNode : teamsArray) {
                     String teamId = teamNode.path("team").path("id").asText();
 
                     try {
-                        // Hent statistikk for dette ene laget (blokkerende kall)
                         ResponseEntity<String> statsResponse = footballApiService.getTeamStatistics(leagueId, season, teamId).block();
                         if (statsResponse != null && statsResponse.getBody() != null) {
                             JsonNode response = objectMapper.readTree(statsResponse.getBody()).path("response");
                             saveTeamStatistics(response, bot);
                         }
 
-                        // Pause for å respektere rate limits. 2.5 sekunder er trygt for 30 kall/minutt.
                         Thread.sleep(2500);
 
                     } catch (WebClientResponseException e) {
@@ -441,10 +435,75 @@ public class ScheduledBotRunner {
         }
     }
 
-    /**
-     * Hjelpemetode for å lagre TeamStatistics. Gjenbrukes av både enkelt-lag og liga-boter.
-     * Denne metoden er @Transactional for å sikre atomiske databaseoperasjoner.
-     */
+    @Async
+    @Scheduled(cron = "0 0 2 * * *")
+    public void runHistoricalDataCollector() {
+        log.info("---[HISTORICAL COLLECTOR]--- Starter innsamling av detaljert kampdata.");
+        List<BotConfiguration> historicalBots = botConfigService.getAllBotsByStatusAndType(
+                BotConfiguration.BotStatus.ACTIVE,
+                BotConfiguration.SourceType.HISTORICAL_FIXTURE_DATA
+        );
+
+        if (historicalBots.isEmpty()) {
+            log.info("---[HISTORICAL COLLECTOR]--- Ingen aktive HISTORICAL_FIXTURE_DATA-boter funnet.");
+            return;
+        }
+
+        for (BotConfiguration bot : historicalBots) {
+            String[] params = bot.getSourceIdentifier().split(":");
+            if (params.length != 2) {
+                log.error("---[HISTORICAL COLLECTOR]--- Ugyldig sourceIdentifier for bot {}: {}. Forventet format: 'ligaId:sesong'", bot.getId(), bot.getSourceIdentifier());
+                continue;
+            }
+            String leagueId = params[0];
+            String season = params[1];
+            log.info("---[HISTORICAL COLLECTOR]--- Starter for liga: {}, sesong: {}", leagueId, season);
+
+            try {
+                ResponseEntity<String> fixturesResponse = footballApiService.getFixturesByLeagueAndSeason(leagueId, season).block();
+                if (fixturesResponse == null || !fixturesResponse.getStatusCode().is2xxSuccessful() || fixturesResponse.getBody() == null) {
+                    log.error("---[HISTORICAL COLLECTOR]--- Kunne ikke hente kampliste for liga {}.", leagueId);
+                    continue;
+                }
+
+                JsonNode fixturesArray = objectMapper.readTree(fixturesResponse.getBody()).path("response");
+                if (!fixturesArray.isArray() || fixturesArray.isEmpty()) {
+                    log.warn("---[HISTORICAL COLLECTOR]--- Fant ingen kamper for liga {} sesong {}.", leagueId, season);
+                    continue;
+                }
+
+                log.info("---[HISTORICAL COLLECTOR]--- Fant {} kamper. Starter innsamling av statistikk for hver kamp...", fixturesArray.size());
+
+                for (JsonNode fixtureNode : fixturesArray) {
+                    Long fixtureId = fixtureNode.path("fixture").path("id").asLong();
+
+                    if (matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, fixtureNode.path("teams").path("home").path("id").asInt()).isPresent()) {
+                        log.info("---[HISTORICAL COLLECTOR]--- Statistikk for fixture {} finnes allerede. Hopper over.", fixtureId);
+                        continue;
+                    }
+
+                    try {
+                        ResponseEntity<String> statsApiResponse = footballApiService.getStatisticsForFixture(fixtureId).block();
+                        if (statsApiResponse != null && statsApiResponse.getBody() != null) {
+                            JsonNode statsResponse = objectMapper.readTree(statsApiResponse.getBody()).path("response");
+                            saveMatchStatistics(statsResponse, fixtureId);
+                        }
+                        Thread.sleep(2500);
+                    } catch (Exception e) {
+                        log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av stats for fixture {}", fixtureId, e);
+                    }
+                }
+                log.info("---[HISTORICAL COLLECTOR]--- Fullførte innsamling for liga {}.", leagueId);
+                bot.setStatus(BotConfiguration.BotStatus.PAUSED);
+                bot.setLastRun(Instant.now());
+                botConfigRepository.save(bot);
+
+            } catch (Exception e) {
+                log.error("---[HISTORICAL COLLECTOR]--- Kritisk feil under innsamling for liga {}", leagueId, e);
+            }
+        }
+    }
+
     @Transactional
     public void saveTeamStatistics(JsonNode statsResponse, BotConfiguration sourceBot) {
         if (statsResponse.isMissingNode() || !statsResponse.isObject() || statsResponse.size() == 0) {
@@ -477,11 +536,55 @@ public class ScheduledBotRunner {
         statsRepository.save(stats);
         log.info("Lagret/oppdatert statistikk for team: {} (ID: {})", stats.getTeamName(), stats.getTeamId());
 
-        // Oppdaterer kun lastRun for den originale enkelt-lag boten
         if (sourceBot != null && sourceBot.getSourceType() == BotConfiguration.SourceType.SPORT_API) {
             sourceBot.setLastRun(Instant.now());
             botConfigRepository.save(sourceBot);
             log.info("Oppdatert lastRun for enkelt-lag-bot '{}'", sourceBot.getName());
         }
+    }
+
+    @Transactional
+    public void saveMatchStatistics(JsonNode statsResponse, Long fixtureId) {
+        if (!statsResponse.isArray()) return;
+
+        for (JsonNode teamStatsNode : statsResponse) {
+            Integer teamId = teamStatsNode.path("team").path("id").asInt();
+
+            if (matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, teamId).isPresent()) {
+                continue;
+            }
+
+            MatchStatistics matchStats = new MatchStatistics();
+            matchStats.setFixtureId(fixtureId);
+            matchStats.setTeamId(teamId);
+
+            for (JsonNode stat : teamStatsNode.path("statistics")) {
+                String type = stat.path("type").asText();
+                JsonNode valueNode = stat.path("value");
+
+                if (valueNode.isNull()) continue;
+
+                switch (type) {
+                    case "Shots on Goal": matchStats.setShotsOnGoal(valueNode.asInt()); break;
+                    case "Shots off Goal": matchStats.setShotsOffGoal(valueNode.asInt()); break;
+                    case "Total Shots": matchStats.setTotalShots(valueNode.asInt()); break;
+                    case "Blocked Shots": matchStats.setBlockedShots(valueNode.asInt()); break;
+                    case "Shots insidebox": matchStats.setShotsInsideBox(valueNode.asInt()); break;
+                    case "Shots outsidebox": matchStats.setShotsOutsideBox(valueNode.asInt()); break;
+                    case "Fouls": matchStats.setFouls(valueNode.asInt()); break;
+                    case "Corner Kicks": matchStats.setCornerKicks(valueNode.asInt()); break;
+                    case "Offsides": matchStats.setOffsides(valueNode.asInt()); break;
+                    case "Ball Possession": matchStats.setBallPossession(valueNode.asText()); break;
+                    case "Yellow Cards": matchStats.setYellowCards(valueNode.asInt()); break;
+                    case "Red Cards": matchStats.setRedCards(valueNode.asInt()); break;
+                    case "Goalkeeper Saves": matchStats.setGoalkeeperSaves(valueNode.asInt()); break;
+                    case "Total passes": matchStats.setTotalPasses(valueNode.asInt()); break;
+                    case "Passes accurate": matchStats.setPassesAccurate(valueNode.asInt()); break;
+                    case "Passes %": matchStats.setPassesPercentage(valueNode.asText()); break;
+                }
+            }
+            matchStatisticsRepository.save(matchStats);
+        }
+        log.info("Lagret detaljert statistikk for fixture {}", fixtureId);
     }
 }

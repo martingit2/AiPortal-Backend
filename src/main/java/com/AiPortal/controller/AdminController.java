@@ -9,10 +9,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * En sikret controller for administrative oppgaver, som å manuelt trigge planlagte jobber.
- * I en ekte app ville du sikret denne til kun admin-brukere.
- */
 @RestController
 @RequestMapping("/api/v1/admin")
 public class AdminController {
@@ -33,7 +29,13 @@ public class AdminController {
     @PostMapping("/run-sport-stats-bot")
     public ResponseEntity<String> runSportStatsBot() {
         scheduledBotRunner.runSportDataBots();
-        return ResponseEntity.ok("Sport-statistikk-bot kjøring manuelt utløst.");
+        return ResponseEntity.ok("Sport-statistikk-bot (enkelt-lag) kjøring manuelt utløst.");
+    }
+
+    @PostMapping("/run-league-stats-collector")
+    public ResponseEntity<String> runLeagueStatsCollector() {
+        scheduledBotRunner.runLeagueStatsCollector();
+        return ResponseEntity.ok("Liga-statistikk-innsamler kjøring manuelt utløst. Jobben kjører i bakgrunnen.");
     }
 
     @PostMapping("/run-metadata-bot")
@@ -49,12 +51,12 @@ public class AdminController {
     }
 
     /**
-     * NYTT ENDEPUNKT: Trigger den nye liga-statistikk-innsamleren.
-     * @return En bekreftelse på at jobben er startet.
+     * NYTT ENDEPUNKT: Trigger innsamling av detaljert historisk kampdata.
+     * @return En bekreftelse på at den langvarige jobben er startet i bakgrunnen.
      */
-    @PostMapping("/run-league-stats-collector")
-    public ResponseEntity<String> runLeagueStatsCollector() {
-        scheduledBotRunner.runLeagueStatsCollector();
-        return ResponseEntity.ok("Liga-statistikk-innsamler kjøring manuelt utløst.");
+    @PostMapping("/run-historical-collector")
+    public ResponseEntity<String> runHistoricalCollector() {
+        scheduledBotRunner.runHistoricalDataCollector();
+        return ResponseEntity.ok("Historisk datainnsamler kjøring manuelt utløst. Dette vil kjøre i bakgrunnen.");
     }
 }

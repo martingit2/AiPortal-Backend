@@ -20,7 +20,7 @@ public class FootballApiService {
     public FootballApiService(@Value("${rapidapi.key}") String apiKey,
                               @Value("${rapidapi.host.football}") String apiHost) {
 
-        final int bufferSize = 16 * 1024 * 1024; // 16 MB
+        final int bufferSize = 16 * 1024 * 1024;
         final ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(codecs -> codecs
                         .defaultCodecs()
@@ -86,18 +86,46 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * NY METODE: Henter en liste over alle lag for en gitt liga og sesong.
-     * @param leagueId ID-en til ligaen.
-     * @param season Årstallet for sesongen.
-     * @return Et Mono med JSON-svaret som inneholder laglisten.
-     */
     public Mono<ResponseEntity<String>> getTeamsInLeague(String leagueId, String season) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/teams")
                         .queryParam("league", leagueId)
                         .queryParam("season", season)
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter alle kamper for en gitt liga og sesong.
+     * @param leagueId ID-en til ligaen.
+     * @param season Årstallet for sesongen.
+     * @return Et Mono med JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getFixturesByLeagueAndSeason(String leagueId, String season) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/fixtures")
+                        .queryParam("league", leagueId)
+                        .queryParam("season", season)
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter detaljert statistikk for en enkelt kamp.
+     * @param fixtureId ID-en til kampen.
+     * @return Et Mono med JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getStatisticsForFixture(Long fixtureId) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/fixtures/statistics")
+                        .queryParam("fixture", String.valueOf(fixtureId))
                         .build())
                 .retrieve()
                 .toEntity(String.class)

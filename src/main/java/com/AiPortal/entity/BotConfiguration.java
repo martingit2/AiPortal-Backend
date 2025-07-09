@@ -6,7 +6,7 @@ import jakarta.persistence.*;
 import java.time.Instant;
 
 @Entity
-@Table(name = "bot_configurations") // Navnet på databasetabellen
+@Table(name = "bot_configurations")
 public class BotConfiguration {
 
     @Id
@@ -14,29 +14,29 @@ public class BotConfiguration {
     private Long id;
 
     @Column(nullable = false)
-    private String name; // F.eks. "Fabrizio Romano Fotballnyheter"
-
-    @Enumerated(EnumType.STRING) // Lagrer enum-verdien som tekst (lesbart)
-    @Column(nullable = false)
-    private SourceType sourceType; // F.eks. TWITTER, SPORT_API
-
-    @Column(nullable = false)
-    private String sourceIdentifier; // F.eks. "FabrizioRomano" for Twitter, "TSLA" for aksje
+    private String name;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private BotStatus status; // F.eks. ACTIVE, PAUSED
+    private SourceType sourceType;
 
-    private Instant lastRun; // Tidspunkt for siste kjøring
+    @Column(nullable = false)
+    private String sourceIdentifier;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private BotStatus status;
+
+    private Instant lastRun;
 
     @Column(nullable = false, updatable = false)
-    private String userId; // Clerk User ID for eieren av denne boten
+    private String userId;
 
-    // Enums for å definere typer og statuser
     public enum SourceType {
         TWITTER,
-        SPORT_API,         // Den gamle typen for ett enkelt lag
-        LEAGUE_STATS,      // <-- NY TYPE: For å hente stats for en hel liga
+        SPORT_API,
+        LEAGUE_STATS,
+        HISTORICAL_FIXTURE_DATA,
         STOCK_API,
         CRYPTO_API
     }
