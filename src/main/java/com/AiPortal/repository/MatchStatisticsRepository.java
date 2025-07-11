@@ -26,4 +26,12 @@ public interface MatchStatisticsRepository extends JpaRepository<MatchStatistics
      * @return En liste med MatchStatistics-entiteter.
      */
     List<MatchStatistics> findAllByFixtureId(Long fixtureId);
+
+    /**
+     * NY METODE: Henter all kampstatistikk for en liste med kamp-IDer.
+     * Dette er en mye mer effektiv måte å hente data på enn å gjøre ett og ett kall i en løkke.
+     * @param fixtureIds En liste med kamp-IDer.
+     * @return En liste som inneholder all statistikk for alle de gitte kampene.
+     */
+    List<MatchStatistics> findAllByFixtureIdIn(List<Long> fixtureIds);
 }

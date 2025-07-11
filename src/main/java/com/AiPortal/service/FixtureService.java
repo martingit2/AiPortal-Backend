@@ -1,4 +1,4 @@
-// src/main/java/com/AiPortal/service/FixtureService.java (NY FIL)
+// src/main/java/com/AiPortal/service/FixtureService.java
 package com.AiPortal.service;
 
 import com.AiPortal.dto.TeamDetailsDto;
@@ -6,10 +6,14 @@ import com.AiPortal.entity.Fixture;
 import com.AiPortal.repository.FixtureRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.domain.Page; // Importer Page
+import org.springframework.data.domain.Pageable; // Importer Pageable
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant; // Importer Instant
+import java.util.Arrays; // Importer Arrays
 import java.util.List;
 import java.util.Optional;
 
@@ -18,8 +22,11 @@ import java.util.Optional;
 public class FixtureService {
 
     private final FixtureRepository fixtureRepository;
-    private final FootballApiService footballApiService;
-    private final ObjectMapper objectMapper;
+    private final FootballApiService footballApiService; // Beholdes for getTeamDetails
+    private final ObjectMapper objectMapper; // Beholdes for getTeamDetails
+
+    // Listen over statuser som vi anser som "ferdigspilt"
+    private static final List<String> FINISHED_STATUSES = Arrays.asList("FT", "AET", "PEN");
 
     public FixtureService(FixtureRepository fixtureRepository, FootballApiService footballApiService, ObjectMapper objectMapper) {
         this.fixtureRepository = fixtureRepository;
@@ -27,6 +34,28 @@ public class FixtureService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Henter en paginert liste over kommende kamper.
+     * @param pageable Pagineringinformasjon fra controlleren.
+     * @return En Page med Fixture-objekter.
+     */
+    public Page<Fixture> getUpcomingFixtures(Pageable pageable) {
+        return fixtureRepository.findByDateAfterOrderByDateAsc(Instant.now(), pageable);
+    }
+
+    /**
+     * Henter en paginert liste over spilte kamper (resultater).
+     * @param pageable Pagineringinformasjon fra controlleren.
+     * @return En Page med Fixture-objekter.
+     */
+    public Page<Fixture> getResultFixtures(Pageable pageable) {
+        return fixtureRepository.findByDateBeforeAndStatusInOrderByDateDesc(Instant.now(), FINISHED_STATUSES, pageable);
+    }
+
+
+    /**
+     * Eksisterende metode for å hente detaljer for ett enkelt lag.
+     */
     public Optional<TeamDetailsDto> getTeamDetails(Integer teamId, Integer season) {
         // Hent kamplisten fra vår database
         List<Fixture> fixtures = fixtureRepository.findFixturesByTeamAndSeason(teamId, season);
