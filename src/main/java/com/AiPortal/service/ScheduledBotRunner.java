@@ -4,6 +4,8 @@ package com.AiPortal.service;
 
 import com.AiPortal.entity.*;
 import com.AiPortal.repository.*;
+import com.AiPortal.service.twitter.TwitterServiceProvider;
+import com.AiPortal.service.twitter.TwitterServiceManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -21,23 +23,26 @@ import reactor.core.scheduler.Schedulers;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Locale; // Importer Locale
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Hovedkomponenten for å kjøre planlagte datainnhentingsjobber.
- * Denne klassen er hjertet av den automatiske datainnsamlingen i plattformen.
- */
 @Component
 public class ScheduledBotRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduledBotRunner.class);
 
+    // Skreddersydd formatter for Twitter's vanlige datoformat
+    private static final DateTimeFormatter TWITTER_DATE_FORMATTER = DateTimeFormatter.ofPattern("EEE MMM dd HH:mm:ss Z yyyy", Locale.ENGLISH);
+
+
     private final BotConfigurationService botConfigService;
     private final BotConfigurationRepository botConfigRepository;
-    private final TwitterService twitterService;
+    private final TwitterServiceManager twitterServiceManager;
     private final RawTweetDataRepository tweetRepository;
     private final TwitterQueryStateRepository queryStateRepository;
     private final FootballApiService footballApiService;
@@ -49,10 +54,10 @@ public class ScheduledBotRunner {
     private final MatchStatisticsRepository matchStatisticsRepository;
     private final ObjectMapper objectMapper;
 
-    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterService twitterService, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, ObjectMapper objectMapper) {
+    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterServiceManager twitterServiceManager, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, ObjectMapper objectMapper) {
         this.botConfigService = botConfigService;
         this.botConfigRepository = botConfigRepository;
-        this.twitterService = twitterService;
+        this.twitterServiceManager = twitterServiceManager;
         this.tweetRepository = tweetRepository;
         this.queryStateRepository = queryStateRepository;
         this.footballApiService = footballApiService;
@@ -69,6 +74,7 @@ public class ScheduledBotRunner {
     @Transactional
     public void runTwitterSearchBot() {
         log.info("--- Starter planlagt Twitter-søk ---");
+
         List<BotConfiguration> activeTwitterBots = botConfigService.getAllBotsByStatusAndType(
                 BotConfiguration.BotStatus.ACTIVE,
                 BotConfiguration.SourceType.TWITTER
@@ -79,77 +85,88 @@ public class ScheduledBotRunner {
             return;
         }
 
-        Map<String, BotConfiguration> botMap = activeTwitterBots.stream()
-                .collect(Collectors.toMap(
-                        bot -> bot.getSourceIdentifier().toLowerCase(),
-                        Function.identity()
-                ));
+        for (BotConfiguration bot : activeTwitterBots) {
+            TwitterServiceProvider twitterProvider = twitterServiceManager.getNextProvider();
+            if (twitterProvider == null) {
+                log.warn("Ingen flere Twitter-leverandører tilgjengelig for denne kjøringen.");
+                break;
+            }
 
-        String query = activeTwitterBots.stream()
-                .map(bot -> "from:" + bot.getSourceIdentifier())
-                .collect(Collectors.joining(" OR "));
-        query += " -is:retweet";
-        log.info("Bygget Twitter-spørring: {}", query);
+            String username = bot.getSourceIdentifier();
+            String query = "from:" + username;
 
-        String sinceId = queryStateRepository.findById("recent_search_all_bots")
-                .map(TwitterQueryState::getLastSeenTweetId)
-                .orElse(null);
-        log.info("Henter tweets siden ID: {}", sinceId == null ? "N/A" : sinceId);
+            if ("TwttrAPI241".equals(twitterProvider.getProviderName())) {
+                query = username;
+            } else if ("TwitterAPI45".equals(twitterProvider.getProviderName())) {
+                query = username;
+            }
 
-        twitterService.searchRecentTweets(query, sinceId)
-                .subscribe(responseBody -> {
-                    Instant now = Instant.now();
-                    activeTwitterBots.forEach(bot -> {
-                        bot.setLastRun(now);
-                        botConfigRepository.save(bot);
-                    });
-                    log.info("Oppdatert 'lastRun' for {} aktive Twitter-bot(er).", activeTwitterBots.size());
+            log.info("Kjører bot '{}' med leverandør '{}' for query '{}'", bot.getName(), twitterProvider.getProviderName(), query);
 
-                    List<JsonNode> tweets = twitterService.parseTweetsFromResponse(responseBody);
-                    String newestId = twitterService.parseNewestTweetId(responseBody);
-
-                    if (!tweets.isEmpty()) {
+            twitterProvider.searchRecentTweets(query, null)
+                    .subscribe(responseBody -> {
+                        List<JsonNode> tweets = twitterProvider.parseTweetsFromResponse(responseBody);
                         int newTweetsCount = 0;
-                        for (JsonNode tweet : tweets) {
-                            String tweetId = tweet.path("id").asText();
-                            if (!tweetRepository.existsByTweetId(tweetId)) {
-                                String authorId = tweet.path("author_id").asText();
-                                String authorUsername = twitterService.findUsernameFromIncludes(responseBody, authorId);
-                                BotConfiguration sourceBot = botMap.get(authorUsername.toLowerCase());
 
-                                if (sourceBot != null) {
-                                    RawTweetData newTweetData = new RawTweetData();
-                                    newTweetData.setTweetId(tweetId);
-                                    newTweetData.setAuthorUsername(authorUsername);
-                                    newTweetData.setContent(tweet.path("text").asText());
-                                    newTweetData.setTweetedAt(Instant.parse(tweet.path("created_at").asText()));
-                                    newTweetData.setSourceBot(sourceBot);
-                                    tweetRepository.save(newTweetData);
-                                    newTweetsCount++;
+                        for (JsonNode tweet : tweets) {
+                            String tweetId;
+                            if ("TwttrAPI241".equals(twitterProvider.getProviderName())) {
+                                tweetId = tweet.path("rest_id").asText();
+                            } else {
+                                tweetId = tweet.path("id_str").asText(tweet.path("id").asText());
+                            }
+
+                            if (tweetId.isEmpty() || tweetRepository.existsByTweetId(tweetId)) {
+                                continue;
+                            }
+
+                            RawTweetData newTweetData = new RawTweetData();
+                            newTweetData.setTweetId(tweetId);
+                            newTweetData.setAuthorUsername(username);
+
+                            if ("TwttrAPI241".equals(twitterProvider.getProviderName())) {
+                                newTweetData.setContent(tweet.path("legacy").path("full_text").asText());
+                            } else {
+                                newTweetData.setContent(tweet.path("text").asText(tweet.path("full_text").asText()));
+                            }
+
+                            String createdAtStr = tweet.path("legacy").path("created_at").asText(tweet.path("created_at").asText());
+                            try {
+                                // Vi prøver vårt skreddersydde format først
+                                newTweetData.setTweetedAt(Instant.from(TWITTER_DATE_FORMATTER.parse(createdAtStr)));
+                            } catch (DateTimeParseException e) {
+                                try {
+                                    // Fallback til standard ISO-format
+                                    newTweetData.setTweetedAt(Instant.parse(createdAtStr));
+                                } catch (Exception e2) {
+                                    log.warn("Kunne ikke parse dato: '{}' for tweet {}. Bruker nåtid.", createdAtStr, tweetId);
+                                    newTweetData.setTweetedAt(Instant.now());
                                 }
                             }
+
+                            newTweetData.setSourceBot(bot);
+                            tweetRepository.save(newTweetData);
+                            newTweetsCount++;
                         }
+
                         if (newTweetsCount > 0) {
-                            log.info("Lagret {} nye tweets i databasen.", newTweetsCount);
+                            log.info("Lagret {} nye tweets for bot '{}'", newTweetsCount, bot.getName());
                         }
-                    } else {
-                        log.info("Ingen nye tweets funnet i dette intervallet.");
-                    }
+                        bot.setLastRun(Instant.now());
+                        botConfigRepository.save(bot);
 
-                    if (newestId != null) {
-                        TwitterQueryState state = new TwitterQueryState();
-                        state.setLastSeenTweetId(newestId);
-                        queryStateRepository.save(state);
-                        log.info("Oppdatert 'lastSeenTweetId' til: {}", newestId);
-                    }
+                    }, error -> {
+                        log.error("Feil for bot '{}' med leverandør '{}': {}", bot.getName(), twitterProvider.getProviderName(), error.getMessage());
+                    });
 
-                }, error -> {
-                    if (error instanceof WebClientResponseException wce && wce.getStatusCode().value() == 429) {
-                        log.warn("Twitter API rate limit truffet. Jobben vil prøve igjen i neste intervall.");
-                    } else {
-                        log.error("Feil ved kjøring av Twitter-søk: {}", error.getMessage());
-                    }
-                });
+            try {
+                Thread.sleep(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Twitter-bot-løkke ble avbrutt.", e);
+                break;
+            }
+        }
     }
 
     @Scheduled(cron = "0 0 5 * * *", zone = "Europe/Oslo")
