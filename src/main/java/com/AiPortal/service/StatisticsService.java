@@ -4,11 +4,14 @@ package com.AiPortal.service;
 import com.AiPortal.dto.LeagueStatsGroupDto;
 import com.AiPortal.dto.MatchStatisticsDto;
 import com.AiPortal.dto.TeamStatisticsDto;
+import com.AiPortal.entity.Fixture; // Importer Fixture
 import com.AiPortal.entity.MatchStatistics;
 import com.AiPortal.entity.TeamStatistics;
+import com.AiPortal.repository.FixtureRepository; // Importer FixtureRepository
 import com.AiPortal.repository.MatchStatisticsRepository;
 import com.AiPortal.repository.TeamStatisticsRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest; // Importer PageRequest
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,29 +20,50 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-/**
- * Service-lag for å håndtere logikk relatert til statistikk.
- */
 @Service
 @Transactional(readOnly = true)
 public class StatisticsService {
 
     private final TeamStatisticsRepository teamStatisticsRepository;
     private final MatchStatisticsRepository matchStatisticsRepository;
+    private final FixtureRepository fixtureRepository; // <-- NY AVHENGIGHET
 
     @Autowired
-    public StatisticsService(TeamStatisticsRepository teamStatisticsRepository, MatchStatisticsRepository matchStatisticsRepository) {
+    public StatisticsService(TeamStatisticsRepository teamStatisticsRepository, MatchStatisticsRepository matchStatisticsRepository, FixtureRepository fixtureRepository) {
         this.teamStatisticsRepository = teamStatisticsRepository;
         this.matchStatisticsRepository = matchStatisticsRepository;
+        this.fixtureRepository = fixtureRepository; // <-- NY AVHENGIGHET
     }
 
     /**
-     * Henter all lagret lagstatistikk og returnerer den gruppert etter liga og sesong.
-     * @return En liste av LeagueStatsGroupDto-objekter.
+     * NY METODE: Henter statistikk for de siste N kampene for et lag for å bygge en formgraf.
+     * @param teamId ID-en til laget.
+     * @param season Sesongen.
+     * @param limit Antall kamper å hente.
+     * @return En liste med MatchStatistics-entiteter for det gitte laget.
      */
+    public List<MatchStatistics> getFormStatsForTeam(Integer teamId, Integer season, int limit) {
+        // 1. Finn de 'limit' siste ferdigspilte kampene for laget
+        List<Fixture> lastFixtures = fixtureRepository.findLastNCompletedFixturesByTeamAndSeason(
+                teamId, season, PageRequest.of(0, limit)
+        );
+
+        if (lastFixtures.isEmpty()) {
+            return List.of(); // Returner tom liste hvis ingen kamper finnes
+        }
+
+        // 2. Hent ut alle kamp-IDene
+        List<Long> fixtureIds = lastFixtures.stream().map(Fixture::getId).collect(Collectors.toList());
+
+        // 3. Hent all statistikk for disse kampene og filtrer for kun det aktuelle laget
+        return matchStatisticsRepository.findAllByFixtureIdIn(fixtureIds).stream()
+                .filter(stat -> stat.getTeamId().equals(teamId))
+                .collect(Collectors.toList());
+    }
+
+
     public List<LeagueStatsGroupDto> getGroupedTeamStatistics() {
         List<TeamStatistics> allStats = teamStatisticsRepository.findAll();
-
         return allStats.stream()
                 .collect(Collectors.groupingBy(
                         stats -> stats.getLeagueName() + " - " + stats.getSeason(),
@@ -51,34 +75,19 @@ public class StatisticsService {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Henter detaljert kampstatistikk for begge lag i en gitt kamp.
-     * @param fixtureId ID-en til kampen.
-     * @return En liste som inneholder DTOer for hjemme- og bortelagets statistikk.
-     */
     public List<MatchStatisticsDto> getStatisticsForFixture(Long fixtureId) {
         List<MatchStatistics> stats = matchStatisticsRepository.findAllByFixtureId(fixtureId);
-
         return stats.stream()
                 .map(this::convertMatchStatsToDto)
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Henter den generelle statistikk-DTOen for ett enkelt lag.
-     * Brukes for å slå opp lagnavn og annen generell info.
-     * @param teamId ID-en til laget.
-     * @return En Optional som inneholder TeamStatisticsDto hvis laget finnes.
-     */
+    // ... (resten av de eksisterende metodene er uendret)
     public Optional<TeamStatisticsDto> getTeamInfo(Integer teamId) {
         return teamStatisticsRepository.findTopByTeamId(teamId)
                 .map(this::convertToDto);
     }
 
-    /**
-     * Hjelpemetode for å konvertere en TeamStatistics-entitet til en TeamStatisticsDto.
-     * Inkluderer nå den faktiske teamId for navigering i frontend.
-     */
     private TeamStatisticsDto convertToDto(TeamStatistics stats) {
         return new TeamStatisticsDto(
                 stats.getId(),
@@ -96,9 +105,6 @@ public class StatisticsService {
         );
     }
 
-    /**
-     * Hjelpemetode for å konvertere en MatchStatistics-entitet til en MatchStatisticsDto.
-     */
     private MatchStatisticsDto convertMatchStatsToDto(MatchStatistics stats) {
         String teamName = teamStatisticsRepository.findTopByTeamId(stats.getTeamId())
                 .map(TeamStatistics::getTeamName)

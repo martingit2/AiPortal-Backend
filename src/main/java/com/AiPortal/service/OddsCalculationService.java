@@ -19,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -29,57 +30,70 @@ public class OddsCalculationService {
     private static final Logger log = LoggerFactory.getLogger(OddsCalculationService.class);
     private static final int FORM_MATCH_COUNT = 10;
     private static final int MINIMUM_MATCHES_FOR_FORM_STATS = 3;
+    private static final double SENTIMENT_INFLUENCE_FACTOR = 0.05; // 5% påvirkning
+    private static final int SENTIMENT_SEARCH_HOURS = 48; // Se på tweets fra de siste 48 timene
+    private static final double SENTIMENT_THRESHOLD = 0.25; // Hvor høy scoren må være for å lage et signal
 
     private final TeamStatisticsRepository teamStatsRepository;
     private final MatchOddsRepository oddsRepository;
     private final FixtureRepository fixtureRepository;
     private final MatchStatisticsRepository matchStatsRepository;
+    private final AnalysisService analysisService;
 
     public OddsCalculationService(
             TeamStatisticsRepository teamStatsRepository,
             MatchOddsRepository matchOddsRepository,
             FixtureRepository fixtureRepository,
-            MatchStatisticsRepository matchStatsRepository) {
+            MatchStatisticsRepository matchStatsRepository,
+            AnalysisService analysisService) {
         this.teamStatsRepository = teamStatsRepository;
         this.oddsRepository = matchOddsRepository;
         this.fixtureRepository = fixtureRepository;
         this.matchStatsRepository = matchStatsRepository;
+        this.analysisService = analysisService;
     }
 
     private static class StrengthData {
         final double expectedHomeGoals;
         final double expectedAwayGoals;
         final String dataSource;
-
-        StrengthData(double expectedHomeGoals, double expectedAwayGoals, String dataSource) {
-            this.expectedHomeGoals = expectedHomeGoals;
-            this.expectedAwayGoals = expectedAwayGoals;
-            this.dataSource = dataSource;
-        }
+        StrengthData(double h, double a, String s) { this.expectedHomeGoals = h; this.expectedAwayGoals = a; this.dataSource = s; }
     }
 
+    /**
+     * Hovedmetoden. Returnerer nå en LISTE med potensielle verdispill for ulike markeder.
+     */
     @Transactional(readOnly = true)
-    public Optional<ValueBetDto> calculateValue(Fixture fixture) {
+    public List<ValueBetDto> calculateValue(Fixture fixture) {
+        List<ValueBetDto> foundValueBets = new ArrayList<>();
+
+        // 1. Beregn "Match Winner"-verdispillet
+        calculateMatchWinnerValue(fixture).ifPresent(foundValueBets::add);
+
+        // 2. Beregn sentiment-baserte signaler for andre markeder
+        foundValueBets.addAll(calculateSentimentMarketSignals(fixture));
+
+        return foundValueBets;
+    }
+
+    private Optional<ValueBetDto> calculateMatchWinnerValue(Fixture fixture) {
         Optional<MatchOdds> marketOddsOpt = oddsRepository.findTopByFixtureId(fixture.getId());
         if (marketOddsOpt.isEmpty()) {
-            log.warn("Ingen markedsodds funnet for kamp ID {}. Avbryter analyse.", fixture.getId());
             return Optional.empty();
         }
 
         StrengthData strengths = getExpectedGoals(fixture);
-
         if (strengths == null) {
-            log.warn("Kunne ikke beregne styrke for lagene i kamp ID {}. Avbryter analyse.", fixture.getId());
             return Optional.empty();
         }
 
-        log.info("Kamp ID {}: Beregner odds basert på datakilde: '{}'. Forventede mål (H-A): {:.2f} - {:.2f}",
+        log.info("Kamp ID {}: Beregner 'Match Winner' basert på datakilde: '{}'. Forventede mål (H-A): {:.2f} - {:.2f}",
                 fixture.getId(), strengths.dataSource, strengths.expectedHomeGoals, strengths.expectedAwayGoals);
 
+        // Poisson-beregning som før...
         double homeWinProb = 0, drawProb = 0, awayWinProb = 0;
         PoissonDistribution homePoisson = new PoissonDistribution(strengths.expectedHomeGoals);
         PoissonDistribution awayPoisson = new PoissonDistribution(strengths.expectedAwayGoals);
-
         for (int i = 0; i <= 7; i++) {
             for (int j = 0; j <= 7; j++) {
                 double prob = homePoisson.probability(i) * awayPoisson.probability(j);
@@ -89,13 +103,75 @@ public class OddsCalculationService {
             }
         }
 
+        // Første normalisering av statistiske sannsynligheter
         double totalProb = homeWinProb + drawProb + awayWinProb;
-        if (totalProb == 0) return Optional.empty();
-        homeWinProb /= totalProb;
-        drawProb /= totalProb;
-        awayWinProb /= totalProb;
+        if(totalProb > 0) {
+            homeWinProb /= totalProb;
+            drawProb /= totalProb;
+            awayWinProb /= totalProb;
+        }
+
+        // Juster for generelt sentiment om kampresultat
+        double generalHomeSentiment = analysisService.getAggregatedSentimentForMarket(fixture.getHomeTeamName(), "TEAM_RESULT", SENTIMENT_SEARCH_HOURS);
+        double generalAwaySentiment = analysisService.getAggregatedSentimentForMarket(fixture.getAwayTeamName(), "TEAM_RESULT", SENTIMENT_SEARCH_HOURS);
+
+        homeWinProb = homeWinProb + (generalHomeSentiment * SENTIMENT_INFLUENCE_FACTOR);
+        awayWinProb = awayWinProb + (generalAwaySentiment * SENTIMENT_INFLUENCE_FACTOR);
+
+        // Sikrer at sannsynlighetene ikke blir negative
+        homeWinProb = Math.max(0, homeWinProb);
+        awayWinProb = Math.max(0, awayWinProb);
+
+        // Normaliser igjen etter sentiment-justering
+        double totalAdjustedProb = homeWinProb + drawProb + awayWinProb;
+        if (totalAdjustedProb > 0) {
+            homeWinProb /= totalAdjustedProb;
+            drawProb /= totalAdjustedProb;
+            awayWinProb /= totalAdjustedProb;
+        }
 
         return Optional.of(buildValueBetDto(fixture, marketOddsOpt.get(), homeWinProb, drawProb, awayWinProb));
+    }
+
+    private List<ValueBetDto> calculateSentimentMarketSignals(Fixture fixture) {
+        List<ValueBetDto> signals = new ArrayList<>();
+
+        // Sjekk for CORNERS
+        double homeCornersSentiment = analysisService.getAggregatedSentimentForMarket(fixture.getHomeTeamName(), "CORNERS", SENTIMENT_SEARCH_HOURS);
+        if (homeCornersSentiment > SENTIMENT_THRESHOLD) {
+            signals.add(createSentimentSignalDto(fixture, String.format("Høyt positivt sentiment (%.2f) for cornere til %s", homeCornersSentiment, fixture.getHomeTeamName())));
+        }
+        double awayCornersSentiment = analysisService.getAggregatedSentimentForMarket(fixture.getAwayTeamName(), "CORNERS", SENTIMENT_SEARCH_HOURS);
+        if (awayCornersSentiment > SENTIMENT_THRESHOLD) {
+            signals.add(createSentimentSignalDto(fixture, String.format("Høyt positivt sentiment (%.2f) for cornere til %s", awayCornersSentiment, fixture.getAwayTeamName())));
+        }
+
+        // Sjekk for CARDS
+        double cardsSentiment = analysisService.getAggregatedSentimentForMarket(fixture.getHomeTeamName() + " " + fixture.getAwayTeamName(), "CARDS", SENTIMENT_SEARCH_HOURS);
+        if (cardsSentiment > SENTIMENT_THRESHOLD) {
+            signals.add(createSentimentSignalDto(fixture, String.format("Høyt positivt sentiment (%.2f) for kort i kampen", cardsSentiment)));
+        }
+
+        // Sjekk for GOALS_OVER_UNDER
+        double goalsSentiment = analysisService.getAggregatedSentimentForMarket(fixture.getHomeTeamName() + " " + fixture.getAwayTeamName(), "GOALS_OVER_UNDER", SENTIMENT_SEARCH_HOURS);
+        if (goalsSentiment > SENTIMENT_THRESHOLD) {
+            signals.add(createSentimentSignalDto(fixture, String.format("Høyt positivt sentiment (%.2f) for mange mål i kampen", goalsSentiment)));
+        } else if (goalsSentiment < -SENTIMENT_THRESHOLD) {
+            signals.add(createSentimentSignalDto(fixture, String.format("Høyt negativt sentiment (%.2f) for få mål i kampen", goalsSentiment)));
+        }
+
+        return signals;
+    }
+
+    private ValueBetDto createSentimentSignalDto(Fixture fixture, String description) {
+        ValueBetDto signalDto = new ValueBetDto();
+        signalDto.setFixtureId(fixture.getId());
+        signalDto.setHomeTeamName(fixture.getHomeTeamName());
+        signalDto.setAwayTeamName(fixture.getAwayTeamName());
+        signalDto.setFixtureDate(fixture.getDate());
+        signalDto.setMarketDescription(description); // Her legger vi inn signalet
+        // De andre feltene (odds, value) er 0/default, siden dette kun er et signal.
+        return signalDto;
     }
 
     private StrengthData getExpectedGoals(Fixture fixture) {
@@ -103,9 +179,7 @@ public class OddsCalculationService {
         if (formBasedStrengths.isPresent()) {
             return formBasedStrengths.get();
         }
-
         log.warn("Kamp ID {}: Kunne ikke bruke form-basert statistikk. Faller tilbake på generell sesong-statistikk.", fixture.getId());
-
         return calculateStrengthFromSeason(fixture).orElse(null);
     }
 
@@ -185,6 +259,7 @@ public class OddsCalculationService {
         valueBet.setHomeTeamName(fixture.getHomeTeamName());
         valueBet.setAwayTeamName(fixture.getAwayTeamName());
         valueBet.setFixtureDate(fixture.getDate());
+        valueBet.setMarketDescription("Match Winner"); // Standard marked
         valueBet.setMarketHomeOdds(marketOdds.getHomeOdds());
         valueBet.setMarketDrawOdds(marketOdds.getDrawOdds());
         valueBet.setMarketAwayOdds(marketOdds.getAwayOdds());
@@ -244,7 +319,6 @@ public class OddsCalculationService {
 
         log.info("Beregnet ligagjennomsnitt for liga {} sesong {}: {:.2f} skudd på mål per kamp (basert på {} kamper)", leagueId, season, averagePerMatch, totalFixtures);
 
-        // Gjennomsnitt per LAG per kamp er gjennomsnitt per kamp delt på 2
         return averagePerMatch / 2.0;
     }
 

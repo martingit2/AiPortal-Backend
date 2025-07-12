@@ -1,3 +1,4 @@
+// src/main/java/com/AiPortal/dto/ValueBetDto.java
 package com.AiPortal.dto;
 
 import java.time.Instant;
@@ -7,6 +8,13 @@ public class ValueBetDto {
     private String homeTeamName;
     private String awayTeamName;
     private Instant fixtureDate;
+
+    /**
+     * NYTT FELT: Beskriver markedet dette verdispillet gjelder for.
+     * Kan være "Match Winner" for standard 1X2-spill, eller en beskrivelse
+     * av et sentiment-drevet signal som "Høyt positivt sentiment for cornere til [Lagnavn]".
+     */
+    private String marketDescription;
 
     // Beste markedsodds vi fant
     private double marketHomeOdds;
@@ -24,8 +32,7 @@ public class ValueBetDto {
     private double valueDraw;
     private double valueAway;
 
-    // Getters and Setters
-
+    // --- Getters and Setters ---
 
     public Long getFixtureId() {
         return fixtureId;
@@ -57,6 +64,14 @@ public class ValueBetDto {
 
     public void setFixtureDate(Instant fixtureDate) {
         this.fixtureDate = fixtureDate;
+    }
+
+    public String getMarketDescription() {
+        return marketDescription;
+    }
+
+    public void setMarketDescription(String marketDescription) {
+        this.marketDescription = marketDescription;
     }
 
     public double getMarketHomeOdds() {

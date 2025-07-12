@@ -122,7 +122,7 @@ public class FootballApiService {
     }
 
     /**
-     * NY METODE: Henter basisinformasjon for ett enkelt lag, basert på ID.
+     * Henter basisinformasjon for ett enkelt lag, basert på ID.
      * Brukes for å slå opp lagnavn på en robust måte.
      * @param teamId ID-en til laget.
      * @return Et Mono med JSON-svaret.
@@ -132,6 +132,22 @@ public class FootballApiService {
                 .uri(uriBuilder -> uriBuilder
                         .path("/teams")
                         .queryParam("id", String.valueOf(teamId))
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter skade- og suspensjonsinformasjon for en spesifikk kamp.
+     * @param fixtureId ID-en til kampen vi vil hente skadeinformasjon for.
+     * @return Et Mono som inneholder JSON-svaret fra API-et.
+     */
+    public Mono<ResponseEntity<String>> getInjuriesForFixture(long fixtureId) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/injuries")
+                        .queryParam("fixture", String.valueOf(fixtureId))
                         .build())
                 .retrieve()
                 .toEntity(String.class)

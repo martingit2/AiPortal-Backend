@@ -1,3 +1,4 @@
+// src/main/java/com/AiPortal/controller/TweetController.java
 package com.AiPortal.controller;
 
 import com.AiPortal.dto.TweetDto;
@@ -20,11 +21,26 @@ public class TweetController {
     }
 
     @GetMapping
-    public ResponseEntity<Page<TweetDto>> getLatestTweets( // Endret returtype til Page<TweetDto>
-                                                           @RequestParam(defaultValue = "0") int page,
-                                                           @RequestParam(defaultValue = "20") int size
+    public ResponseEntity<Page<TweetDto>> getLatestTweets(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
     ) {
         Page<TweetDto> tweetPage = tweetService.getLatestTweets(page, size);
         return ResponseEntity.ok(tweetPage);
+    }
+
+    /**
+     * NYTT ENDEPUNKT: Sletter en spesifikk tweet basert på dens database-ID.
+     * @param id ID-en til tweeten som skal slettes, fra URL-stien.
+     * @return 204 No Content hvis slettingen var vellykket, 404 Not Found hvis ikke.
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteTweet(@PathVariable Long id) {
+        boolean deleted = tweetService.deleteTweetById(id);
+        if (deleted) {
+            return ResponseEntity.noContent().build(); // Standard og korrekt respons for vellykket sletting
+        } else {
+            return ResponseEntity.notFound().build();
+        }
     }
 }

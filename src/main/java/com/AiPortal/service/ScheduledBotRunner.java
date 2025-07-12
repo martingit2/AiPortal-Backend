@@ -26,7 +26,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Locale; // Importer Locale
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -35,10 +35,7 @@ import java.util.stream.Collectors;
 public class ScheduledBotRunner {
 
     private static final Logger log = LoggerFactory.getLogger(ScheduledBotRunner.class);
-
-    // Skreddersydd formatter for Twitter's vanlige datoformat
     private static final DateTimeFormatter TWITTER_DATE_FORMATTER = DateTimeFormatter.ofPattern("EEE MMM dd HH:mm:ss Z yyyy", Locale.ENGLISH);
-
 
     private final BotConfigurationService botConfigService;
     private final BotConfigurationRepository botConfigRepository;
@@ -52,9 +49,10 @@ public class ScheduledBotRunner {
     private final BookmakerRepository bookmakerRepository;
     private final BetTypeRepository betTypeRepository;
     private final MatchStatisticsRepository matchStatisticsRepository;
+    private final InjuryRepository injuryRepository; // <-- NY AVHENGIGHET
     private final ObjectMapper objectMapper;
 
-    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterServiceManager twitterServiceManager, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, ObjectMapper objectMapper) {
+    public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterServiceManager twitterServiceManager, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, InjuryRepository injuryRepository, ObjectMapper objectMapper) {
         this.botConfigService = botConfigService;
         this.botConfigRepository = botConfigRepository;
         this.twitterServiceManager = twitterServiceManager;
@@ -67,6 +65,7 @@ public class ScheduledBotRunner {
         this.bookmakerRepository = bookmakerRepository;
         this.betTypeRepository = betTypeRepository;
         this.matchStatisticsRepository = matchStatisticsRepository;
+        this.injuryRepository = injuryRepository; // <-- NY AVHENGIGHET
         this.objectMapper = objectMapper;
     }
 
@@ -74,7 +73,6 @@ public class ScheduledBotRunner {
     @Transactional
     public void runTwitterSearchBot() {
         log.info("--- Starter planlagt Twitter-søk ---");
-
         List<BotConfiguration> activeTwitterBots = botConfigService.getAllBotsByStatusAndType(
                 BotConfiguration.BotStatus.ACTIVE,
                 BotConfiguration.SourceType.TWITTER
@@ -132,11 +130,9 @@ public class ScheduledBotRunner {
 
                             String createdAtStr = tweet.path("legacy").path("created_at").asText(tweet.path("created_at").asText());
                             try {
-                                // Vi prøver vårt skreddersydde format først
                                 newTweetData.setTweetedAt(Instant.from(TWITTER_DATE_FORMATTER.parse(createdAtStr)));
                             } catch (DateTimeParseException e) {
                                 try {
-                                    // Fallback til standard ISO-format
                                     newTweetData.setTweetedAt(Instant.parse(createdAtStr));
                                 } catch (Exception e2) {
                                     log.warn("Kunne ikke parse dato: '{}' for tweet {}. Bruker nåtid.", createdAtStr, tweetId);
@@ -510,30 +506,42 @@ public class ScheduledBotRunner {
                     log.info("---[HISTORICAL COLLECTOR]--- Alle {} kamper for liga {} fantes allerede i databasen.", fixturesArray.size(), leagueId);
                 }
 
-                log.info("---[HISTORICAL COLLECTOR]--- Starter innsamling av manglende kampstatistikk...", fixturesArray.size());
+                log.info("---[HISTORICAL COLLECTOR]--- Starter innsamling av manglende kampstatistikk og skadedata...", fixturesArray.size());
 
                 for (JsonNode fixtureNode : fixturesArray) {
                     Long fixtureId = fixtureNode.path("fixture").path("id").asLong();
 
                     String status = fixtureNode.path("fixture").path("status").path("short").asText();
                     if (!("FT".equals(status) || "AET".equals(status) || "PEN".equals(status))) {
-                        continue; // Hopp over kamper som ikke er ferdigspilt
-                    }
-
-                    if (matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, fixtureNode.path("teams").path("home").path("id").asInt()).isPresent()) {
-                        log.info("---[HISTORICAL COLLECTOR]--- Statistikk for fixture {} finnes allerede. Hopper over.", fixtureId);
                         continue;
                     }
 
-                    try {
-                        ResponseEntity<String> statsApiResponse = footballApiService.getStatisticsForFixture(fixtureId).block();
-                        if (statsApiResponse != null && statsApiResponse.getBody() != null) {
-                            JsonNode statsResponse = objectMapper.readTree(statsApiResponse.getBody()).path("response");
-                            saveMatchStatistics(statsResponse, fixtureId);
+                    // Hent og lagre kampstatistikk
+                    if (!matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, fixtureNode.path("teams").path("home").path("id").asInt()).isPresent()) {
+                        try {
+                            ResponseEntity<String> statsApiResponse = footballApiService.getStatisticsForFixture(fixtureId).block();
+                            if (statsApiResponse != null && statsApiResponse.getBody() != null) {
+                                JsonNode statsResponse = objectMapper.readTree(statsApiResponse.getBody()).path("response");
+                                saveMatchStatistics(statsResponse, fixtureId);
+                            }
+                            Thread.sleep(1500); // Pause for å respektere rate limits
+                        } catch (Exception e) {
+                            log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av stats for fixture {}", fixtureId, e);
                         }
-                        Thread.sleep(2500);
+                    } else {
+                        log.info("---[HISTORICAL COLLECTOR]--- Statistikk for fixture {} finnes allerede. Hopper over.", fixtureId);
+                    }
+
+                    // NY LOGIKK: Hent og lagre skadedata
+                    try {
+                        ResponseEntity<String> injuriesResponse = footballApiService.getInjuriesForFixture(fixtureId).block();
+                        if(injuriesResponse != null && injuriesResponse.getBody() != null) {
+                            JsonNode injuriesData = objectMapper.readTree(injuriesResponse.getBody()).path("response");
+                            saveInjuryData(injuriesData, fixtureId);
+                        }
+                        Thread.sleep(1500); // Pause for å respektere rate limits
                     } catch (Exception e) {
-                        log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av stats for fixture {}", fixtureId, e);
+                        log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av skadedata for fixture {}", fixtureId, e);
                     }
                 }
 
@@ -548,6 +556,40 @@ public class ScheduledBotRunner {
         }
     }
 
+    // NY HJELPEMETODE for å lagre skadedata
+    @Transactional
+    public void saveInjuryData(JsonNode injuriesResponse, Long fixtureId) {
+        if (!injuriesResponse.isArray()) return;
+
+        int newInjuriesCount = 0;
+        for (JsonNode injuryNode : injuriesResponse) {
+            Integer playerId = injuryNode.path("player").path("id").asInt();
+
+            // Unngå duplikater
+            if (playerId == 0 || injuryRepository.existsByFixtureIdAndPlayerId(fixtureId, playerId)) {
+                continue;
+            }
+
+            Injury injury = new Injury();
+            injury.setFixtureId(fixtureId);
+            injury.setPlayerId(playerId);
+            injury.setPlayerName(injuryNode.path("player").path("name").asText());
+            injury.setTeamId(injuryNode.path("team").path("id").asInt());
+            injury.setLeagueId(injuryNode.path("league").path("id").asInt());
+            injury.setSeason(injuryNode.path("league").path("season").asInt());
+            injury.setType(injuryNode.path("player").path("type").asText());
+            injury.setReason(injuryNode.path("player").path("reason").asText());
+
+            injuryRepository.save(injury);
+            newInjuriesCount++;
+        }
+
+        if (newInjuriesCount > 0) {
+            log.info("---[HISTORICAL COLLECTOR]--- Lagret {} nye skadeoppføringer for fixture {}.", newInjuriesCount, fixtureId);
+        }
+    }
+
+
     @Transactional
     public boolean saveOrUpdateFixtureFromJson(JsonNode fixtureNode) {
         long fixtureId = fixtureNode.path("fixture").path("id").asLong();
@@ -560,10 +602,10 @@ public class ScheduledBotRunner {
         Integer goalsAway = goalsNode.path("away").isNull() ? null : goalsNode.path("away").asInt();
 
         if (fixture.getId() == null) {
-            needsUpdate = true; // Ny fixture, må lagres
+            needsUpdate = true;
         } else if ((goalsHome != null && !goalsHome.equals(fixture.getGoalsHome())) ||
                 (goalsAway != null && !goalsAway.equals(fixture.getGoalsAway()))) {
-            needsUpdate = true; // Eksisterende fixture, men resultat mangler/er annerledes
+            needsUpdate = true;
         }
 
         if (needsUpdate) {
