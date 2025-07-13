@@ -1,5 +1,4 @@
 // src/main/java/com/AiPortal/service/FootballApiService.java
-
 package com.AiPortal.service;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -20,7 +19,7 @@ public class FootballApiService {
     public FootballApiService(@Value("${rapidapi.key}") String apiKey,
                               @Value("${rapidapi.host.football}") String apiHost) {
 
-        final int bufferSize = 16 * 1024 * 1024;
+        final int bufferSize = 16 * 1024 * 1024; // 16MB
         final ExchangeStrategies strategies = ExchangeStrategies.builder()
                 .codecs(codecs -> codecs
                         .defaultCodecs()
@@ -75,23 +74,16 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    public Mono<ResponseEntity<String>> getFixtureById(long fixtureId) {
+    /**
+     * NY METODE: Henter detaljer for flere kamper samtidig (bulk).
+     * @param fixtureIds En bindestrek-separert streng med fixture IDs (f.eks. "123-124-125").
+     * @return Et Mono med JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getFixturesByIds(String fixtureIds) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/fixtures")
-                        .queryParam("id", String.valueOf(fixtureId))
-                        .build())
-                .retrieve()
-                .toEntity(String.class)
-                .timeout(API_TIMEOUT);
-    }
-
-    public Mono<ResponseEntity<String>> getTeamsInLeague(String leagueId, String season) {
-        return this.webClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/teams")
-                        .queryParam("league", leagueId)
-                        .queryParam("season", season)
+                        .queryParam("ids", fixtureIds)
                         .build())
                 .retrieve()
                 .toEntity(String.class)
@@ -110,6 +102,7 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
+    // Merk: Denne brukes ikke lenger av den optimaliserte historical collectoren.
     public Mono<ResponseEntity<String>> getStatisticsForFixture(Long fixtureId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -121,12 +114,6 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * Henter basisinformasjon for ett enkelt lag, basert på ID.
-     * Brukes for å slå opp lagnavn på en robust måte.
-     * @param teamId ID-en til laget.
-     * @return Et Mono med JSON-svaret.
-     */
     public Mono<ResponseEntity<String>> getTeamById(Integer teamId) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -139,18 +126,20 @@ public class FootballApiService {
     }
 
     /**
-     * NY METODE: Henter skade- og suspensjonsinformasjon for en spesifikk kamp.
-     * @param fixtureId ID-en til kampen vi vil hente skadeinformasjon for.
-     * @return Et Mono som inneholder JSON-svaret fra API-et.
+     * NY METODE: Henter skadeinfo for flere kamper samtidig (bulk).
+     * @param fixtureIds En bindestrek-separert streng med fixture IDs.
+     * @return Et Mono med JSON-svaret.
      */
-    public Mono<ResponseEntity<String>> getInjuriesForFixture(long fixtureId) {
+    public Mono<ResponseEntity<String>> getInjuriesByIds(String fixtureIds) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/injuries")
-                        .queryParam("fixture", String.valueOf(fixtureId))
+                        .queryParam("ids", fixtureIds)
                         .build())
                 .retrieve()
                 .toEntity(String.class)
                 .timeout(API_TIMEOUT);
     }
+
+    // MERKNAD: /injuries?fixture={id} kan fjernes hvis den ikke brukes andre steder.
 }

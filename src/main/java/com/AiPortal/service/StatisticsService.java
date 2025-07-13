@@ -26,17 +26,17 @@ public class StatisticsService {
 
     private final TeamStatisticsRepository teamStatisticsRepository;
     private final MatchStatisticsRepository matchStatisticsRepository;
-    private final FixtureRepository fixtureRepository; // <-- NY AVHENGIGHET
+    private final FixtureRepository fixtureRepository;
 
     @Autowired
     public StatisticsService(TeamStatisticsRepository teamStatisticsRepository, MatchStatisticsRepository matchStatisticsRepository, FixtureRepository fixtureRepository) {
         this.teamStatisticsRepository = teamStatisticsRepository;
         this.matchStatisticsRepository = matchStatisticsRepository;
-        this.fixtureRepository = fixtureRepository; // <-- NY AVHENGIGHET
+        this.fixtureRepository = fixtureRepository;
     }
 
     /**
-     * NY METODE: Henter statistikk for de siste N kampene for et lag for å bygge en formgraf.
+     * Henter statistikk for de siste N kampene for et lag for å bygge en formgraf.
      * @param teamId ID-en til laget.
      * @param season Sesongen.
      * @param limit Antall kamper å hente.
@@ -63,7 +63,11 @@ public class StatisticsService {
 
 
     public List<LeagueStatsGroupDto> getGroupedTeamStatistics() {
-        List<TeamStatistics> allStats = teamStatisticsRepository.findAll();
+        // --- OPTIMALISERING: Bruker den nye metoden fra repository-et ---
+        // Dette henter TeamStatistics OG tilhørende BotConfiguration i én enkelt database-spørring,
+        // som løser "N+1 select"-problemet og er dramatisk mye raskere.
+        List<TeamStatistics> allStats = teamStatisticsRepository.findAllWithBot();
+
         return allStats.stream()
                 .collect(Collectors.groupingBy(
                         stats -> stats.getLeagueName() + " - " + stats.getSeason(),
@@ -82,7 +86,6 @@ public class StatisticsService {
                 .collect(Collectors.toList());
     }
 
-    // ... (resten av de eksisterende metodene er uendret)
     public Optional<TeamStatisticsDto> getTeamInfo(Integer teamId) {
         return teamStatisticsRepository.findTopByTeamId(teamId)
                 .map(this::convertToDto);
@@ -101,11 +104,15 @@ public class StatisticsService {
                 stats.getLossesTotal(),
                 stats.getGoalsForTotal(),
                 stats.getGoalsAgainstTotal(),
+                // Dette er nå trygt og raskt, siden sourceBot allerede er lastet inn
                 stats.getSourceBot() != null ? stats.getSourceBot().getName() : "Ukjent Kilde"
         );
     }
 
     private MatchStatisticsDto convertMatchStatsToDto(MatchStatistics stats) {
+        // Denne metoden kan fortsatt forårsake et ekstra kall per lag.
+        // For optimalisering her, kunne man hentet alle team-navn i en egen bulk-operasjon først.
+        // Men forbedringen er mindre kritisk enn i getGroupedTeamStatistics.
         String teamName = teamStatisticsRepository.findTopByTeamId(stats.getTeamId())
                 .map(TeamStatistics::getTeamName)
                 .orElse("Ukjent Lag");

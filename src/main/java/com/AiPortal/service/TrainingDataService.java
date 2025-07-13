@@ -14,10 +14,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.time.Instant;
+import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 @Transactional(readOnly = true)
@@ -37,16 +37,58 @@ public class TrainingDataService {
         this.injuryRepository = injuryRepository;
     }
 
+    /**
+     * Bygger et komplett treningssett ved å først hente all nødvendig data i bulk,
+     * for deretter å prosessere den i minnet. Dette er dramatisk raskere enn
+     * å gjøre databasekall inne i en løkke.
+     */
     public List<TrainingDataDto> buildTrainingSet() {
-        log.info("Starter bygging av treningssett (Høy-ytelse versjon)...");
+        log.info("---[OPTIMALISERT] Starter bygging av treningssett ---");
 
-        // Hent alle ferdigspilte kamper
+        // --- STEG 1: HENT ALL NØDVENDIG DATA I BULK ---
+
+        // 1a. Hent alle ferdigspilte kamper. Dette er utgangspunktet.
         List<Fixture> allCompletedFixtures = fixtureRepository.findByStatusIn(FINISHED_STATUSES);
-        log.info("Fant {} ferdigspilte kamper å prosessere.", allCompletedFixtures.size());
+        log.info("Fant {} ferdigspilte kamper.", allCompletedFixtures.size());
+        if (allCompletedFixtures.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Long> allFixtureIds = allCompletedFixtures.stream().map(Fixture::getId).collect(Collectors.toList());
+
+        // 1b. Hent all relevant kampstatistikk for alle kampene i ett kall.
+        List<MatchStatistics> allStats = matchStatsRepository.findAllByFixtureIdIn(allFixtureIds);
+        log.info("Fant {} rader med kampstatistikk for disse kampene.", allStats.size());
+
+        // 1c. Hent all relevant skadeinformasjon for alle kampene i ett kall.
+        List<Injury> allInjuries = injuryRepository.findAllByFixtureIdIn(allFixtureIds);
+        log.info("Fant {} skadeoppføringer for disse kampene.", allInjuries.size());
+
+        // --- STEG 2: PROSESSER BULK-DATA TIL EFFEKTIVE MAPS FOR RASKT OPPSLAG ---
+
+        // Map fra fixtureId -> List<MatchStatistics>
+        Map<Long, List<MatchStatistics>> statsByFixtureId = allStats.stream()
+                .collect(Collectors.groupingBy(MatchStatistics::getFixtureId));
+
+        // Map fra fixtureId -> teamId -> antall skader
+        Map<Long, Map<Integer, Long>> injuriesByFixtureAndTeam = allInjuries.stream()
+                .collect(Collectors.groupingBy(Injury::getFixtureId,
+                        Collectors.groupingBy(Injury::getTeamId, Collectors.counting())));
+
+        // Map fra teamId -> List<Fixture> (sortert etter dato, nyeste først)
+        Map<Integer, List<Fixture>> fixturesByTeamId = new HashMap<>();
+        for (Fixture f : allCompletedFixtures) {
+            fixturesByTeamId.computeIfAbsent(f.getHomeTeamId(), k -> new ArrayList<>()).add(f);
+            fixturesByTeamId.computeIfAbsent(f.getAwayTeamId(), k -> new ArrayList<>()).add(f);
+        }
+        // Sorter listene én gang for alle
+        fixturesByTeamId.values().forEach(list -> list.sort(Comparator.comparing(Fixture::getDate).reversed()));
+
+        log.info("Data er pre-prosessert og mappet. Starter feature engineering i minnet.");
+
+        // --- STEG 3: ITERER OG BYGG TRENINGSSETTET VED HJELP AV DE RASKE MAPSENE ---
 
         List<TrainingDataDto> trainingSet = new ArrayList<>();
-
-        // Loop gjennom hver kamp for å lage en rad i treningssettet
         for (Fixture fixture : allCompletedFixtures) {
             if (fixture.getGoalsHome() == null || fixture.getGoalsAway() == null) continue;
 
@@ -55,15 +97,19 @@ public class TrainingDataService {
             dto.setLeagueId(fixture.getLeagueId());
             dto.setSeason(fixture.getSeason());
 
-            // Hent features for hjemmelaget, basert på historikk FØR denne kampen
-            TeamFeatureSet homeFeatures = calculateFeaturesForTeam(fixture.getHomeTeamId(), fixture);
+            // Hent features for hjemmelaget (bruker nå in-memory-data)
+            TeamFeatureSet homeFeatures = calculateFeaturesForTeamInMemory(
+                    fixture.getHomeTeamId(), fixture, fixturesByTeamId, statsByFixtureId, injuriesByFixtureAndTeam
+            );
             dto.setHomeAvgShotsOnGoal(homeFeatures.avgShotsOnGoal);
             dto.setHomeAvgShotsOffGoal(homeFeatures.avgShotsOffGoal);
             dto.setHomeAvgCorners(homeFeatures.avgCorners);
             dto.setHomeInjuries(homeFeatures.injuryCount);
 
             // Hent features for bortelaget
-            TeamFeatureSet awayFeatures = calculateFeaturesForTeam(fixture.getAwayTeamId(), fixture);
+            TeamFeatureSet awayFeatures = calculateFeaturesForTeamInMemory(
+                    fixture.getAwayTeamId(), fixture, fixturesByTeamId, statsByFixtureId, injuriesByFixtureAndTeam
+            );
             dto.setAwayAvgShotsOnGoal(awayFeatures.avgShotsOnGoal);
             dto.setAwayAvgShotsOffGoal(awayFeatures.avgShotsOffGoal);
             dto.setAwayAvgCorners(awayFeatures.avgCorners);
@@ -77,51 +123,55 @@ public class TrainingDataService {
             trainingSet.add(dto);
         }
 
-        log.info("Fullførte bygging av treningssett med {} rader.", trainingSet.size());
+        log.info("Fullførte bygging av treningssett med {} rader. Antall DB-kall: 3", trainingSet.size());
         return trainingSet;
     }
 
     /**
-     * Dette er den logisk korrekte, men trege, metoden.
-     * Vi beholder denne inntil videre, og optimaliserer den i et senere steg.
+     * Hjelpemetode som beregner features for et lag utelukkende basert på
+     * pre-lastet data i minnet. Gjør ingen databasekall.
      */
-    private TeamFeatureSet calculateFeaturesForTeam(Integer teamId, Fixture contextFixture) {
-        // 1. Hent historiske kamper for laget FØR datoen til kontekst-kampen
-        List<Fixture> lastFixturesThisSeason = fixtureRepository.findLastNCompletedFixturesByTeamBeforeDate(
-                teamId, contextFixture.getDate(), PageRequest.of(0, FORM_MATCH_COUNT_FOR_TRAINING)
-        );
+    private TeamFeatureSet calculateFeaturesForTeamInMemory(
+            Integer teamId,
+            Fixture contextFixture,
+            Map<Integer, List<Fixture>> fixturesByTeam,
+            Map<Long, List<MatchStatistics>> statsByFixture,
+            Map<Long, Map<Integer, Long>> injuriesByFixture
+    ) {
+        // Finn lagets kamper i det pre-lastede map-et
+        List<Fixture> teamFixtures = fixturesByTeam.getOrDefault(teamId, Collections.emptyList());
 
-        List<Fixture> combinedFixtures = new ArrayList<>(lastFixturesThisSeason);
+        // Finn alle kamper spilt FØR den aktuelle kampen (contextFixture)
+        List<Fixture> pastFixtures = teamFixtures.stream()
+                .filter(f -> f.getDate().isBefore(contextFixture.getDate()))
+                .limit(FORM_MATCH_COUNT_FOR_TRAINING) // Ta de 10 siste
+                .collect(Collectors.toList());
 
-        // 2. Hvis vi har for få kamper, fyll på med kamper fra forrige sesong
-        int neededFromLastSeason = FORM_MATCH_COUNT_FOR_TRAINING - combinedFixtures.size();
-        if (neededFromLastSeason > 0 && contextFixture.getSeason() != null) {
-            List<Fixture> lastFixturesPrevSeason = fixtureRepository.findLastNCompletedFixturesByTeamAndSeason(
-                    teamId, contextFixture.getSeason() - 1, PageRequest.of(0, neededFromLastSeason)
-            );
-            combinedFixtures.addAll(lastFixturesPrevSeason);
+        if (pastFixtures.isEmpty()) {
+            return new TeamFeatureSet(); // Returner tomt objekt hvis ingen historikk
         }
 
-        if (combinedFixtures.isEmpty()) {
-            return new TeamFeatureSet();
-        }
+        // Hent statistikk for disse kampene fra det pre-lastede map-et
+        List<MatchStatistics> relevantStats = pastFixtures.stream()
+                .flatMap(f -> statsByFixture.getOrDefault(f.getId(), Collections.emptyList()).stream())
+                .filter(s -> s.getTeamId().equals(teamId))
+                .collect(Collectors.toList());
 
-        List<Long> fixtureIds = combinedFixtures.stream().map(Fixture::getId).collect(Collectors.toList());
+        // Beregn gjennomsnitt
+        double avgShotsOnGoal = relevantStats.stream().mapToInt(s -> Optional.ofNullable(s.getShotsOnGoal()).orElse(0)).average().orElse(0.0);
+        double avgShotsOffGoal = relevantStats.stream().mapToInt(s -> Optional.ofNullable(s.getShotsOffGoal()).orElse(0)).average().orElse(0.0);
+        double avgCorners = relevantStats.stream().mapToInt(s -> Optional.ofNullable(s.getCornerKicks()).orElse(0)).average().orElse(0.0);
 
-        // GJØR DATABASEKALL INNE I LØKKEN (dette er tregt, men korrekt)
-        List<MatchStatistics> stats = matchStatsRepository.findAllByFixtureIdIn(fixtureIds);
-
-        // Beregn gjennomsnittlig statistikk
-        double avgShotsOnGoal = stats.stream().filter(s -> s.getTeamId().equals(teamId) && s.getShotsOnGoal() != null).mapToDouble(MatchStatistics::getShotsOnGoal).average().orElse(0.0);
-        double avgShotsOffGoal = stats.stream().filter(s -> s.getTeamId().equals(teamId) && s.getShotsOffGoal() != null).mapToDouble(MatchStatistics::getShotsOffGoal).average().orElse(0.0);
-        double avgCorners = stats.stream().filter(s -> s.getTeamId().equals(teamId) && s.getCornerKicks() != null).mapToDouble(MatchStatistics::getCornerKicks).average().orElse(0.0);
-
-        // Hent antall skader for denne spesifikke kampen
-        int injuryCount = injuryRepository.countByFixtureIdAndTeamId(contextFixture.getId(), teamId);
+        // Hent antall skader for denne spesifikke kampen fra det pre-lastede map-et
+        int injuryCount = injuriesByFixture.getOrDefault(contextFixture.getId(), Collections.emptyMap())
+                .getOrDefault(teamId, 0L).intValue();
 
         return new TeamFeatureSet(avgShotsOnGoal, avgShotsOffGoal, avgCorners, injuryCount);
     }
 
+    /**
+     * Enkel indre klasse for å holde på beregnede features for et lag.
+     */
     private static class TeamFeatureSet {
         double avgShotsOnGoal = 0.0;
         double avgShotsOffGoal = 0.0;
