@@ -4,6 +4,8 @@ package com.AiPortal.dto;
 /**
  * Data Transfer Object for å sende et komplett, flatt datasett for én kamp
  * fra Java-backenden til Python-tjenesten for maskinlæring.
+ *
+ * Denne versjonen er utvidet med spiller-spesifikke features.
  */
 public class TrainingDataDto {
 
@@ -12,17 +14,23 @@ public class TrainingDataDto {
     private Integer season;
     private Integer leagueId;
 
-    // Features - Hjemmelag
+
     private double homeAvgShotsOnGoal;
     private double homeAvgShotsOffGoal;
     private double homeAvgCorners;
     private int homeInjuries;
 
-    // Features - Bortelag
     private double awayAvgShotsOnGoal;
     private double awayAvgShotsOffGoal;
     private double awayAvgCorners;
     private int awayInjuries;
+
+
+    private double homePlayersAvgRating;
+    private double homePlayersAvgGoals;
+
+    private double awayPlayersAvgRating;
+    private double awayPlayersAvgGoals;
 
     // Label (Målet vi skal predikere)
     private String result; // "HOME_WIN", "DRAW", "AWAY_WIN"
@@ -53,4 +61,12 @@ public class TrainingDataDto {
     public void setAwayInjuries(int awayInjuries) { this.awayInjuries = awayInjuries; }
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
+    public double getHomePlayersAvgRating() { return homePlayersAvgRating; }
+    public void setHomePlayersAvgRating(double homePlayersAvgRating) { this.homePlayersAvgRating = homePlayersAvgRating; }
+    public double getHomePlayersAvgGoals() { return homePlayersAvgGoals; }
+    public void setHomePlayersAvgGoals(double homePlayersAvgGoals) { this.homePlayersAvgGoals = homePlayersAvgGoals; }
+    public double getAwayPlayersAvgRating() { return awayPlayersAvgRating; }
+    public void setAwayPlayersAvgRating(double awayPlayersAvgRating) { this.awayPlayersAvgRating = awayPlayersAvgRating; }
+    public double getAwayPlayersAvgGoals() { return awayPlayersAvgGoals; }
+    public void setAwayPlayersAvgGoals(double awayPlayersAvgGoals) { this.awayPlayersAvgGoals = awayPlayersAvgGoals; }
 }

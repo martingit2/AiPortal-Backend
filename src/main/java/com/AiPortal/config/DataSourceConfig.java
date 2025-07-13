@@ -1,3 +1,4 @@
+// src/main/java/com/AiPortal/config/DataSourceConfig.java
 package com.AiPortal.config;
 
 import com.zaxxer.hikari.HikariDataSource;
@@ -10,7 +11,6 @@ import javax.sql.DataSource;
 @Configuration
 public class DataSourceConfig {
 
-    // Henter verdier fra application.properties
     @Value("${spring.datasource.url}")
     private String dbUrl;
 
@@ -24,22 +24,28 @@ public class DataSourceConfig {
     public DataSource dataSource() {
         HikariDataSource dataSource = new HikariDataSource();
 
-        // Setter de grunnleggende tilkoblingsdetaljene
         dataSource.setJdbcUrl(dbUrl);
         dataSource.setUsername(dbUsername);
         dataSource.setPassword(dbPassword);
 
-
-        // Vi setter pool-størrelsen manuelt og eksplisitt til 1.
-        dataSource.setMaximumPoolSize(1);
-
-        // Andre nyttige innstillinger for å unngå at forbindelsen blir "stale"
+        // Vi setter pool-størrelsen eksplisitt til 1 for å jobbe med Supabase's Session Pooler.
+        dataSource.setMaximumPoolSize(5);
         dataSource.setMinimumIdle(1);
-        dataSource.setIdleTimeout(600000); // 10 minutter
-        dataSource.setConnectionTimeout(30000); // 30 sekunder
-        dataSource.setLeakDetectionThreshold(60000); // 1 minutt for å oppdage "lekkede" forbindelser
 
-        // Navn for poolen, nyttig for logging
+        // --- VIKTIGE ENDRINGER FOR LANGE BAKGRUNNSJOBBER ---
+
+        // Øker Connection Timeout til 2 minutter.
+        // Dette gir en jobb som venter på tilkoblingen mer tid før den gir opp.
+        dataSource.setConnectionTimeout(120000); // 2 minutter (var 30 sekunder)
+
+        // Øker Idle Timeout til 30 minutter.
+        // Dette forhindrer at tilkoblingen blir lukket av poolen mens en lang
+        // datainnsamlingsjobb holder på med eksterne API-kall (som kan ta tid).
+        dataSource.setIdleTimeout(1800000); // 30 minutter (var 10 minutter)
+
+        // Holder denne som den er. Nyttig for å oppdage feil.
+        dataSource.setLeakDetectionThreshold(60000); // 1 minutt
+
         dataSource.setPoolName("Supabase-Hikari-Pool");
 
         return dataSource;
