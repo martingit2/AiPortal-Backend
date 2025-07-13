@@ -28,8 +28,10 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Component
 public class ScheduledBotRunner {
@@ -49,7 +51,7 @@ public class ScheduledBotRunner {
     private final BookmakerRepository bookmakerRepository;
     private final BetTypeRepository betTypeRepository;
     private final MatchStatisticsRepository matchStatisticsRepository;
-    private final InjuryRepository injuryRepository; // <-- NY AVHENGIGHET
+    private final InjuryRepository injuryRepository;
     private final ObjectMapper objectMapper;
 
     public ScheduledBotRunner(BotConfigurationService botConfigService, BotConfigurationRepository botConfigRepository, TwitterServiceManager twitterServiceManager, RawTweetDataRepository tweetRepository, TwitterQueryStateRepository queryStateRepository, FootballApiService footballApiService, TeamStatisticsRepository statsRepository, FixtureRepository fixtureRepository, MatchOddsRepository matchOddsRepository, BookmakerRepository bookmakerRepository, BetTypeRepository betTypeRepository, MatchStatisticsRepository matchStatisticsRepository, InjuryRepository injuryRepository, ObjectMapper objectMapper) {
@@ -65,7 +67,7 @@ public class ScheduledBotRunner {
         this.bookmakerRepository = bookmakerRepository;
         this.betTypeRepository = betTypeRepository;
         this.matchStatisticsRepository = matchStatisticsRepository;
-        this.injuryRepository = injuryRepository; // <-- NY AVHENGIGHET
+        this.injuryRepository = injuryRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -203,46 +205,63 @@ public class ScheduledBotRunner {
 
     @Scheduled(cron = "0 0 1 * * *", zone = "Europe/Oslo")
     public void fetchDailyOdds() {
-        String tomorrow = LocalDate.now().plusDays(1).toString();
-        log.info("--- Starter planlagt jobb for å hente odds for dato: {} ---", tomorrow);
+        // Lager en liste med dato-strenger for i dag og de neste 6 dagene (totalt 7 dager)
+        List<String> datesToFetch = IntStream.range(0, 7)
+                .mapToObj(i -> LocalDate.now().plusDays(i).toString())
+                .collect(Collectors.toList());
 
-        footballApiService.getOddsByDate(tomorrow)
-                .flatMap(responseEntity -> {
-                    if (!responseEntity.getStatusCode().is2xxSuccessful() || responseEntity.getBody() == null) {
-                        log.warn("Mottok ugyldig svar fra odds-API: status={}, body er tom.", responseEntity.getStatusCode());
-                        return Mono.empty();
-                    }
-                    try {
-                        JsonNode root = objectMapper.readTree(responseEntity.getBody());
-                        if (root.has("errors") && !root.path("errors").isEmpty()) {
-                            log.error("Odds-API returnerte feil i body: {}", root.path("errors"));
+        log.info("--- Starter planlagt jobb for å hente odds for de neste 7 dagene: {} ---", datesToFetch);
+
+        for (String date : datesToFetch) {
+            log.info("Henter odds for dato: {}", date);
+            footballApiService.getOddsByDate(date)
+                    .flatMap(responseEntity -> {
+                        if (!responseEntity.getStatusCode().is2xxSuccessful() || responseEntity.getBody() == null) {
+                            log.warn("Mottok ugyldig svar fra odds-API for dato {}: status={}, body er tom.", date, responseEntity.getStatusCode());
                             return Mono.empty();
                         }
-                        JsonNode responses = root.path("response");
-                        if (!responses.isArray() || responses.isEmpty()) {
-                            log.warn("Ingen odds funnet for dato: {}. 'response'-arrayen er tom eller mangler.", tomorrow);
-                            return Mono.empty();
+                        try {
+                            JsonNode root = objectMapper.readTree(responseEntity.getBody());
+                            if (root.has("errors") && !root.path("errors").isEmpty()) {
+                                log.error("Odds-API returnerte feil i body for dato {}: {}", date, root.path("errors"));
+                                return Mono.empty();
+                            }
+                            JsonNode responses = root.path("response");
+                            if (!responses.isArray() || responses.isEmpty()) {
+                                log.warn("Ingen odds funnet for dato: {}. 'response'-arrayen er tom eller mangler.", date);
+                                return Mono.empty();
+                            }
+                            return Flux.fromIterable(responses)
+                                    .flatMap(this::processSingleFixtureWithOdds)
+                                    .collectList()
+                                    .doOnSuccess(processedFixtures -> {
+                                        if (!processedFixtures.isEmpty()) {
+                                            log.info("Fullførte prosessering av odds for {} kamper for dato: {}", processedFixtures.size(), date);
+                                        }
+                                    });
+                        } catch (Exception e) {
+                            log.error("Kritisk feil ved parsing av ytre odds-respons for dato {}. Body: {}", date, responseEntity.getBody(), e);
+                            return Mono.error(e);
                         }
-                        return Flux.fromIterable(responses)
-                                .flatMap(this::processSingleFixtureWithOdds)
-                                .collectList()
-                                .doOnSuccess(processedFixtures -> {
-                                    log.info("Fullførte prosessering av odds for {} kamper for dato: {}", processedFixtures.size(), tomorrow);
-                                });
-                    } catch (Exception e) {
-                        log.error("Kritisk feil ved parsing av ytre odds-respons. Body: {}", responseEntity.getBody(), e);
-                        return Mono.error(e);
-                    }
-                })
-                .timeout(Duration.ofMinutes(5))
-                .doOnError(error -> {
-                    if (error instanceof WebClientResponseException ex) {
-                        log.error("API-kall for odds feilet med status: {}. Body: {}", ex.getStatusCode(), ex.getResponseBodyAsString());
-                    } else {
-                        log.error("En uventet feil oppstod i WebClient-strømmen ved henting av odds-data.", error);
-                    }
-                })
-                .subscribe();
+                    })
+                    .timeout(Duration.ofMinutes(5)) // Timeout per dato
+                    .doOnError(error -> {
+                        if (error instanceof WebClientResponseException ex) {
+                            log.error("API-kall for odds feilet for dato {} med status: {}. Body: {}", date, ex.getStatusCode(), ex.getResponseBodyAsString());
+                        } else {
+                            log.error("En uventet feil oppstod i WebClient-strømmen ved henting av odds-data for dato {}.", date, error);
+                        }
+                    })
+                    .subscribe();
+
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Odds-innhenting ble avbrutt under pause.");
+                break;
+            }
+        }
     }
 
     private Mono<Fixture> processSingleFixtureWithOdds(JsonNode oddsResponse) {
@@ -516,7 +535,6 @@ public class ScheduledBotRunner {
                         continue;
                     }
 
-                    // Hent og lagre kampstatistikk
                     if (!matchStatisticsRepository.findByFixtureIdAndTeamId(fixtureId, fixtureNode.path("teams").path("home").path("id").asInt()).isPresent()) {
                         try {
                             ResponseEntity<String> statsApiResponse = footballApiService.getStatisticsForFixture(fixtureId).block();
@@ -524,7 +542,7 @@ public class ScheduledBotRunner {
                                 JsonNode statsResponse = objectMapper.readTree(statsApiResponse.getBody()).path("response");
                                 saveMatchStatistics(statsResponse, fixtureId);
                             }
-                            Thread.sleep(1500); // Pause for å respektere rate limits
+                            Thread.sleep(1500);
                         } catch (Exception e) {
                             log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av stats for fixture {}", fixtureId, e);
                         }
@@ -532,14 +550,13 @@ public class ScheduledBotRunner {
                         log.info("---[HISTORICAL COLLECTOR]--- Statistikk for fixture {} finnes allerede. Hopper over.", fixtureId);
                     }
 
-                    // NY LOGIKK: Hent og lagre skadedata
                     try {
                         ResponseEntity<String> injuriesResponse = footballApiService.getInjuriesForFixture(fixtureId).block();
                         if(injuriesResponse != null && injuriesResponse.getBody() != null) {
                             JsonNode injuriesData = objectMapper.readTree(injuriesResponse.getBody()).path("response");
                             saveInjuryData(injuriesData, fixtureId);
                         }
-                        Thread.sleep(1500); // Pause for å respektere rate limits
+                        Thread.sleep(1500);
                     } catch (Exception e) {
                         log.error("---[HISTORICAL COLLECTOR]--- Feil ved henting/prosessering av skadedata for fixture {}", fixtureId, e);
                     }
@@ -556,7 +573,6 @@ public class ScheduledBotRunner {
         }
     }
 
-    // NY HJELPEMETODE for å lagre skadedata
     @Transactional
     public void saveInjuryData(JsonNode injuriesResponse, Long fixtureId) {
         if (!injuriesResponse.isArray()) return;
@@ -565,7 +581,6 @@ public class ScheduledBotRunner {
         for (JsonNode injuryNode : injuriesResponse) {
             Integer playerId = injuryNode.path("player").path("id").asInt();
 
-            // Unngå duplikater
             if (playerId == 0 || injuryRepository.existsByFixtureIdAndPlayerId(fixtureId, playerId)) {
                 continue;
             }
@@ -589,38 +604,44 @@ public class ScheduledBotRunner {
         }
     }
 
-
     @Transactional
     public boolean saveOrUpdateFixtureFromJson(JsonNode fixtureNode) {
         long fixtureId = fixtureNode.path("fixture").path("id").asLong();
-        Fixture fixture = fixtureRepository.findById(fixtureId).orElse(new Fixture());
 
+        Optional<Fixture> existingFixtureOpt = fixtureRepository.findById(fixtureId);
+
+        Fixture fixtureToSave;
         boolean needsUpdate = false;
 
-        JsonNode goalsNode = fixtureNode.path("goals");
-        Integer goalsHome = goalsNode.path("home").isNull() ? null : goalsNode.path("home").asInt();
-        Integer goalsAway = goalsNode.path("away").isNull() ? null : goalsNode.path("away").asInt();
+        Integer goalsHome = fixtureNode.path("goals").path("home").isNull() ? null : fixtureNode.path("goals").path("home").asInt();
+        Integer goalsAway = fixtureNode.path("goals").path("away").isNull() ? null : fixtureNode.path("goals").path("away").asInt();
 
-        if (fixture.getId() == null) {
-            needsUpdate = true;
-        } else if ((goalsHome != null && !goalsHome.equals(fixture.getGoalsHome())) ||
-                (goalsAway != null && !goalsAway.equals(fixture.getGoalsAway()))) {
+        if (existingFixtureOpt.isPresent()) {
+            fixtureToSave = existingFixtureOpt.get();
+            if ((goalsHome != null && !goalsHome.equals(fixtureToSave.getGoalsHome())) ||
+                    (goalsAway != null && !goalsAway.equals(fixtureToSave.getGoalsAway()))) {
+                fixtureToSave.setGoalsHome(goalsHome);
+                fixtureToSave.setGoalsAway(goalsAway);
+                needsUpdate = true;
+            }
+        } else {
+            fixtureToSave = new Fixture();
+            fixtureToSave.setId(fixtureId);
+            fixtureToSave.setLeagueId(fixtureNode.path("league").path("id").asInt());
+            fixtureToSave.setSeason(fixtureNode.path("league").path("season").asInt());
+            fixtureToSave.setDate(Instant.parse(fixtureNode.path("fixture").path("date").asText()));
+            fixtureToSave.setStatus(fixtureNode.path("fixture").path("status").path("short").asText());
+            fixtureToSave.setHomeTeamId(fixtureNode.path("teams").path("home").path("id").asInt());
+            fixtureToSave.setHomeTeamName(fixtureNode.path("teams").path("home").path("name").asText());
+            fixtureToSave.setAwayTeamId(fixtureNode.path("teams").path("away").path("id").asInt());
+            fixtureToSave.setAwayTeamName(fixtureNode.path("teams").path("away").path("name").asText());
+            fixtureToSave.setGoalsHome(goalsHome);
+            fixtureToSave.setGoalsAway(goalsAway);
             needsUpdate = true;
         }
 
         if (needsUpdate) {
-            fixture.setId(fixtureId);
-            fixture.setLeagueId(fixtureNode.path("league").path("id").asInt());
-            fixture.setSeason(fixtureNode.path("league").path("season").asInt());
-            fixture.setDate(Instant.parse(fixtureNode.path("fixture").path("date").asText()));
-            fixture.setStatus(fixtureNode.path("fixture").path("status").path("short").asText());
-            fixture.setHomeTeamId(fixtureNode.path("teams").path("home").path("id").asInt());
-            fixture.setHomeTeamName(fixtureNode.path("teams").path("home").path("name").asText());
-            fixture.setAwayTeamId(fixtureNode.path("teams").path("away").path("id").asInt());
-            fixture.setAwayTeamName(fixtureNode.path("teams").path("away").path("name").asText());
-            fixture.setGoalsHome(goalsHome);
-            fixture.setGoalsAway(goalsAway);
-            fixtureRepository.save(fixture);
+            fixtureRepository.save(fixtureToSave);
         }
 
         return needsUpdate;

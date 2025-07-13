@@ -1,5 +1,5 @@
 // src/main/java/com/AiPortal/config/SecurityConfig.java
-package com.AiPortal.config; // Pass på at denne matcher din faktiske pakkestruktur
+package com.AiPortal.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,19 +33,20 @@ public class SecurityConfig {
 
                 // 4. Definer autorisasjonsregler for HTTP-forespørsler.
                 .authorizeHttpRequests(authorize -> authorize
-                        // KORRIGERT REGEL: Tillat ALLE metoder (GET, POST, PUT, etc.) til stier under /api/v1/public/
-                        .requestMatchers("/api/v1/public/**").permitAll()
+                        // TILLAT offentlige, admin, og ml-data-endepunkter uten token
+                        .requestMatchers(
+                                "/api/v1/public/**",
+                                "/api/v1/admin/**",
+                                "/api/v1/ml-data/**" // Tillater kall fra treningsskriptet
+                        ).permitAll()
 
-                        // Alle andre forespørsler som matcher /api/v1/** krever en gyldig autentisering (JWT-token).
+                        // Alle andre forespørsler som matcher /api/v1/** krever et gyldig autentisering (JWT-token).
                         .requestMatchers("/api/v1/**").authenticated()
 
                         // For alle andre forespørsler som ikke er dekket over, tillat dem.
-                        // Dette kan være nyttig for f.eks. Spring Boot Actuator-endepunkter eller standard feilsider.
-                        // Kan strammes inn til .denyAll() eller .authenticated() ved behov.
                         .anyRequest().permitAll()
                 )
                 // 5. Konfigurer serveren til å validere innkommende tokens som JWTs.
-                // withDefaults() bruker konfigurasjonen fra application.properties (issuer-uri).
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults()));
 
         return http.build();
@@ -59,28 +60,17 @@ public class SecurityConfig {
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Definer hvilke origins (din React-apps URL) som er tillatt.
-        // VIKTIG: Ikke bruk "*" i produksjon hvis du bruker allowCredentials(true).
         configuration.setAllowedOrigins(Arrays.asList(
                 "http://localhost:5173", // For din lokale Vite dev server
                 "https://aracanix-din-frontend.vercel.app" // Eksempel på din produksjons-URL
-                // Legg til flere URL-er her om nødvendig
         ));
 
-        // Definer hvilke HTTP-metoder som er tillatt.
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-
-        // Definer hvilke HTTP-headere som kan sendes med forespørselen.
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Cache-Control", "Content-Type", "X-Requested-With"));
-
-        // Tillat at nettleseren sender credentials (f.eks. cookies, authorization headers med tokens).
         configuration.setAllowCredentials(true);
-
-        // Hvor lenge (i sekunder) resultatet av en pre-flight (OPTIONS) forespørsel kan caches.
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        // Bruk denne CORS-konfigurasjonen for alle stier ("/**") i applikasjonen.
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
