@@ -1,5 +1,4 @@
 // src/main/java/com/AiPortal/entity/BotConfiguration.java
-
 package com.AiPortal.entity;
 
 import jakarta.persistence.*;
@@ -29,6 +28,13 @@ public class BotConfiguration {
 
     private Instant lastRun;
 
+    /**
+     * NYTT FELT: Lagrer 'since'-timestampen for API-er som støtter det (f.eks. Pinnacle).
+     * Dette lar oss kun hente data som er endret siden forrige kjøring,
+     * noe som er ekstremt effektivt.
+     */
+    private Long sinceTimestamp;
+
     @Column(nullable = false, updatable = false)
     private String userId;
 
@@ -37,6 +43,7 @@ public class BotConfiguration {
         SPORT_API,
         LEAGUE_STATS,
         HISTORICAL_FIXTURE_DATA,
+        PINNACLE_ODDS,
         STOCK_API,
         CRYPTO_API
     }
@@ -95,6 +102,14 @@ public class BotConfiguration {
 
     public void setLastRun(Instant lastRun) {
         this.lastRun = lastRun;
+    }
+
+    public Long getSinceTimestamp() {
+        return sinceTimestamp;
+    }
+
+    public void setSinceTimestamp(Long sinceTimestamp) {
+        this.sinceTimestamp = sinceTimestamp;
     }
 
     public String getUserId() {

@@ -2,19 +2,19 @@
 package com.AiPortal.controller;
 
 import com.AiPortal.dto.TeamDetailsDto;
-import com.AiPortal.entity.Fixture; // Importer Fixture
+import com.AiPortal.dto.UpcomingFixtureDto;
+import com.AiPortal.entity.Fixture;
 import com.AiPortal.service.FixtureService;
-import org.springframework.data.domain.Page; // Importer Page
-import org.springframework.data.domain.PageRequest; // Importer PageRequest
-import org.springframework.data.domain.Pageable; // Importer Pageable
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/v1/fixtures")
-// MERK: Jfjernet den spesifikke @CrossOrigin her, siden vi har en global konfigurasjon i SecurityConfig.
-// Hvis vi trenger den tilbake, kan vu fjerne kommentaren.
-// @CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class FixtureController {
 
     private final FixtureService fixtureService;
@@ -24,11 +24,8 @@ public class FixtureController {
     }
 
     /**
-     * NYTT ENDEPUNKT: Henter en paginert liste over kommende kamper.
-     * Frontenden kaller denne for "Kommende"-fanen.
-     * @param page Sidenummer (0-indeksert), default 0.
-     * @param size Antall elementer per side, default 25.
-     * @return En ResponseEntity som inneholder en Page med Fixture-objekter.
+     * Henter en paginert liste over kommende kamper (kun grunnleggende info).
+     * Brukes på "Kampoversikt"-siden.
      */
     @GetMapping("/upcoming")
     public ResponseEntity<Page<Fixture>> getUpcomingFixtures(
@@ -40,11 +37,19 @@ public class FixtureController {
     }
 
     /**
-     * NYTT ENDEPUNKT: Henter en paginert liste over spilte kamper (resultater).
-     * Frontenden kaller denne for "Resultater"-fanen.
-     * @param page Sidenummer (0-indeksert), default 0.
-     * @param size Antall elementer per side, default 25.
-     * @return En ResponseEntity som inneholder en Page med Fixture-objekter.
+     * NYTT ENDEPUNKT: Henter en komplett liste over alle kommende kamper
+     * med tilhørende odds-informasjon. Brukes på den nye "Kommende Odds"-siden.
+     * @return En liste med DTOer som gir en full oversikt.
+     */
+    @GetMapping("/upcoming-with-odds")
+    public ResponseEntity<List<UpcomingFixtureDto>> getUpcomingFixturesWithOdds() {
+        List<UpcomingFixtureDto> fixtures = fixtureService.getUpcomingFixturesWithOdds();
+        return ResponseEntity.ok(fixtures);
+    }
+
+    /**
+     * Henter en paginert liste over spilte kamper (resultater).
+     * Brukes på "Kampoversikt"-siden.
      */
     @GetMapping("/results")
     public ResponseEntity<Page<Fixture>> getResultFixtures(
@@ -55,9 +60,8 @@ public class FixtureController {
         return ResponseEntity.ok(resultFixtures);
     }
 
-
     /**
-     * Eksisterende endepunkt for å hente detaljer for ett enkelt lag.
+     * Henter detaljer for ett enkelt lag. Brukes på "Lagdetaljer"-siden.
      */
     @GetMapping("/team-details/team/{teamId}/season/{season}")
     public ResponseEntity<TeamDetailsDto> getTeamDetails(

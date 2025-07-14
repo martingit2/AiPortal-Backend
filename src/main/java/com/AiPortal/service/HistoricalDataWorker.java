@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,8 +16,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -33,6 +35,7 @@ public class HistoricalDataWorker {
     private final MatchStatisticsRepository matchStatsRepository;
     private final InjuryRepository injuryRepository;
 
+    @Autowired
     public HistoricalDataWorker(
             FootballApiService footballApiService,
             ObjectMapper objectMapper,
@@ -82,11 +85,18 @@ public class HistoricalDataWorker {
         List<Player> newPlayersToSave = new ArrayList<>();
         List<PlayerMatchStatistics> newPlayerStatsToSave = new ArrayList<>();
         List<MatchStatistics> newTeamStatsToSave = new ArrayList<>();
+        List<Fixture> fixturesToSave = new ArrayList<>();
 
         List<Long> fixtureIdsInChunk = StreamSupport.stream(bulkFixtures.spliterator(), false)
                 .map(node -> node.path("fixture").path("id").asLong())
                 .collect(Collectors.toList());
+
+        if (fixtureIdsInChunk.isEmpty()) return;
+
         Set<Integer> playerIdsInChunk = extractAllPlayerIds(bulkFixtures);
+
+        Map<Long, Fixture> existingFixturesMap = fixtureRepository.findAllById(fixtureIdsInChunk).stream()
+                .collect(Collectors.toMap(Fixture::getId, Function.identity()));
 
         Set<Integer> existingPlayerIds = new HashSet<>(playerRepository.findAllById(playerIdsInChunk)
                 .stream().map(Player::getId).collect(Collectors.toSet()));
@@ -100,7 +110,7 @@ public class HistoricalDataWorker {
                 .collect(Collectors.toSet());
 
         for (JsonNode fixtureNode : bulkFixtures) {
-            fixtureRepository.save(createOrUpdateFixtureFromJson(fixtureNode));
+            fixturesToSave.add(createOrUpdateFixtureFromJson(fixtureNode, existingFixturesMap));
 
             for (JsonNode teamStatsNode : fixtureNode.path("statistics")) {
                 long fixtureId = fixtureNode.path("fixture").path("id").asLong();
@@ -118,12 +128,12 @@ public class HistoricalDataWorker {
                     int playerId = playerInfoNode.path("id").asInt();
                     long fixtureId = fixtureNode.path("fixture").path("id").asLong();
 
-                    if (!existingPlayerIds.contains(playerId)) {
+                    if (playerId != 0 && !existingPlayerIds.contains(playerId)) {
                         newPlayersToSave.add(createPlayer(playerInfoNode));
                         existingPlayerIds.add(playerId);
                     }
 
-                    if (!existingPlayerMatchKeys.contains(fixtureId + ":" + playerId)) {
+                    if (playerId != 0 && !existingPlayerMatchKeys.contains(fixtureId + ":" + playerId)) {
                         JsonNode statsNode = playerPerformanceNode.path("statistics").get(0);
                         if (statsNode != null && !statsNode.isMissingNode()) {
                             newPlayerStatsToSave.add(createPlayerMatchStatistics(statsNode, fixtureId, teamId, playerId));
@@ -134,12 +144,10 @@ public class HistoricalDataWorker {
             }
         }
 
+        if (!fixturesToSave.isEmpty()) fixtureRepository.saveAll(fixturesToSave);
         if (!newPlayersToSave.isEmpty()) playerRepository.saveAll(newPlayersToSave);
         if (!newTeamStatsToSave.isEmpty()) matchStatsRepository.saveAll(newTeamStatsToSave);
         if (!newPlayerStatsToSave.isEmpty()) playerMatchStatsRepository.saveAll(newPlayerStatsToSave);
-
-        log.info("Batch-lagring for chunk: {} nye spillere, {} nye lag-stats, {} nye spiller-stats.",
-                newPlayersToSave.size(), newTeamStatsToSave.size(), newPlayerStatsToSave.size());
     }
 
     private void saveAllInjuries(JsonNode bulkInjuries) {
@@ -166,9 +174,7 @@ public class HistoricalDataWorker {
         return playerIds;
     }
 
-    // --- HJELPEMETODER FOR Å OPPRETTE ENTITETER ---
-
-    public Player createPlayer(JsonNode playerInfoNode) {
+    private Player createPlayer(JsonNode playerInfoNode) {
         Player player = new Player();
         player.setId(playerInfoNode.path("id").asInt());
         player.setName(playerInfoNode.path("name").asText());
@@ -176,9 +182,9 @@ public class HistoricalDataWorker {
         return player;
     }
 
-    public Fixture createOrUpdateFixtureFromJson(JsonNode fixtureNode) {
+    private Fixture createOrUpdateFixtureFromJson(JsonNode fixtureNode, Map<Long, Fixture> existingFixturesMap) {
         long fixtureId = fixtureNode.path("fixture").path("id").asLong();
-        Fixture fixture = fixtureRepository.findById(fixtureId).orElse(new Fixture());
+        Fixture fixture = existingFixturesMap.getOrDefault(fixtureId, new Fixture());
         fixture.setId(fixtureId);
         fixture.setLeagueId(fixtureNode.path("league").path("id").asInt());
         fixture.setSeason(fixtureNode.path("league").path("season").asInt());
@@ -194,7 +200,7 @@ public class HistoricalDataWorker {
         return fixture;
     }
 
-    public MatchStatistics createMatchStatistics(JsonNode teamStatsNode, long fixtureId, int teamId) {
+    private MatchStatistics createMatchStatistics(JsonNode teamStatsNode, long fixtureId, int teamId) {
         MatchStatistics matchStats = new MatchStatistics();
         matchStats.setFixtureId(fixtureId);
         matchStats.setTeamId(teamId);
@@ -224,7 +230,7 @@ public class HistoricalDataWorker {
         return matchStats;
     }
 
-    public PlayerMatchStatistics createPlayerMatchStatistics(JsonNode statsNode, long fixtureId, int teamId, int playerId) {
+    private PlayerMatchStatistics createPlayerMatchStatistics(JsonNode statsNode, long fixtureId, int teamId, int playerId) {
         PlayerMatchStatistics pms = new PlayerMatchStatistics();
         pms.setFixtureId(fixtureId);
         pms.setTeamId(teamId);
@@ -261,7 +267,7 @@ public class HistoricalDataWorker {
         return pms;
     }
 
-    public Injury createInjury(JsonNode injuryNode) {
+    private Injury createInjury(JsonNode injuryNode) {
         Injury injury = new Injury();
         injury.setFixtureId(injuryNode.path("fixture").path("id").asLong());
         injury.setPlayerId(injuryNode.path("player").path("id").asInt());

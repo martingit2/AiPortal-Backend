@@ -1,5 +1,4 @@
 // src/main/java/com/AiPortal/controller/AdminController.java
-
 package com.AiPortal.controller;
 
 import com.AiPortal.service.ScheduledBotRunner;
@@ -47,16 +46,22 @@ public class AdminController {
     @PostMapping("/run-odds-bot")
     public ResponseEntity<String> runOddsBot() {
         scheduledBotRunner.fetchDailyOdds();
-        return ResponseEntity.ok("Odds-bot kjøring manuelt utløst.");
+        return ResponseEntity.ok("Api-Sports Odds-bot kjøring manuelt utløst.");
     }
 
     /**
-     * NYTT ENDEPUNKT: Trigger innsamling av detaljert historisk kampdata.
-     * @return En bekreftelse på at den langvarige jobben er startet i bakgrunnen.
+     * NYTT ENDEPUNKT: Trigger innhenting av odds fra Pinnacle-APIet.
+     * @return En bekreftelse på at jobben er startet.
      */
+    @PostMapping("/run-pinnacle-odds-bot")
+    public ResponseEntity<String> runPinnacleOddsBot() {
+        scheduledBotRunner.fetchPinnacleOdds();
+        return ResponseEntity.ok("Pinnacle Odds-bot kjøring manuelt utløst.");
+    }
+
     @PostMapping("/run-historical-collector")
     public ResponseEntity<String> runHistoricalCollector() {
         scheduledBotRunner.runHistoricalDataCollector();
-        return ResponseEntity.ok("Historisk datainnsamler kjøring manuelt utløst. Dette vil kjøre i bakgrunnen.");
+        return ResponseEntity.ok("Historisk datainnsamler er forberedt og jobber er lagt i kø. Prosessering skjer i bakgrunnen.");
     }
 }
