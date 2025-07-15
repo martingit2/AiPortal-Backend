@@ -1,9 +1,10 @@
 // src/main/java/com/AiPortal/controller/StatisticsController.java
 package com.AiPortal.controller;
 
+import com.AiPortal.dto.HeadToHeadStatsDto;
 import com.AiPortal.dto.LeagueStatsGroupDto;
 import com.AiPortal.dto.MatchStatisticsDto;
-import com.AiPortal.dto.PlayerMatchStatisticsDto; // NY IMPORT
+import com.AiPortal.dto.PlayerMatchStatisticsDto;
 import com.AiPortal.entity.MatchStatistics;
 import com.AiPortal.service.StatisticsService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,11 +50,6 @@ public class StatisticsController {
         return ResponseEntity.ok(formStats);
     }
 
-    /**
-     * NYTT ENDEPUNKT: Henter all spillerstatistikk for en enkelt kamp.
-     * @param fixtureId ID-en til kampen.
-     * @return En liste med DTOer for hver spiller som deltok.
-     */
     @GetMapping("/players/fixture/{fixtureId}")
     public ResponseEntity<List<PlayerMatchStatisticsDto>> getPlayerStatsForFixture(@PathVariable Long fixtureId) {
         List<PlayerMatchStatisticsDto> playerStats = statisticsService.getPlayerStatisticsForFixture(fixtureId);
@@ -61,5 +57,17 @@ public class StatisticsController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(playerStats);
+    }
+
+    /**
+     * NYTT ENDEPUNKT: Henter Head-to-Head (H2H) statistikk for en gitt kamp.
+     * @param fixtureId ID-en til kampen.
+     * @return En DTO med H2H-statistikk, eller 404 Not Found hvis ingen data finnes.
+     */
+    @GetMapping("/h2h/{fixtureId}")
+    public ResponseEntity<HeadToHeadStatsDto> getHeadToHeadStats(@PathVariable Long fixtureId) {
+        return statisticsService.getHeadToHeadStats(fixtureId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 }

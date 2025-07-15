@@ -5,7 +5,7 @@ package com.AiPortal.dto;
  * Data Transfer Object for å sende et komplett, flatt datasett for én kamp
  * fra Java-backenden til Python-tjenesten for maskinlæring.
  *
- * Denne versjonen er utvidet med spiller-spesifikke features.
+ * Denne versjonen er utvidet med H2H (Head-to-Head) statistikk.
  */
 public class TrainingDataDto {
 
@@ -14,29 +14,35 @@ public class TrainingDataDto {
     private Integer season;
     private Integer leagueId;
 
-
+    // Eksisterende features
     private double homeAvgShotsOnGoal;
     private double homeAvgShotsOffGoal;
     private double homeAvgCorners;
     private int homeInjuries;
+    private double homePlayersAvgRating;
+    private double homePlayersAvgGoals;
 
     private double awayAvgShotsOnGoal;
     private double awayAvgShotsOffGoal;
     private double awayAvgCorners;
     private int awayInjuries;
-
-
-    private double homePlayersAvgRating;
-    private double homePlayersAvgGoals;
-
     private double awayPlayersAvgRating;
     private double awayPlayersAvgGoals;
 
+    // --- NYE H2H FEATURES ---
+    private double h2hHomeWinPercentage;
+    private double h2hAwayWinPercentage;
+    private double h2hDrawPercentage;
+    private double h2hAvgGoals;
+
     // Label (Målet vi skal predikere)
-    private String result; // "HOME_WIN", "DRAW", "AWAY_WIN"
+    private String result;
+    private Integer goalsHome;
+    private Integer goalsAway;
 
 
-    // Getters and Setters
+    // --- Getters and Setters ---
+
     public Long getFixtureId() { return fixtureId; }
     public void setFixtureId(Long fixtureId) { this.fixtureId = fixtureId; }
     public Integer getSeason() { return season; }
@@ -69,4 +75,18 @@ public class TrainingDataDto {
     public void setAwayPlayersAvgRating(double awayPlayersAvgRating) { this.awayPlayersAvgRating = awayPlayersAvgRating; }
     public double getAwayPlayersAvgGoals() { return awayPlayersAvgGoals; }
     public void setAwayPlayersAvgGoals(double awayPlayersAvgGoals) { this.awayPlayersAvgGoals = awayPlayersAvgGoals; }
+    public Integer getGoalsHome() { return goalsHome; }
+    public void setGoalsHome(Integer goalsHome) { this.goalsHome = goalsHome; }
+    public Integer getGoalsAway() { return goalsAway; }
+    public void setGoalsAway(Integer goalsAway) { this.goalsAway = goalsAway; }
+
+    // --- NYE GETTERS OG SETTERS for H2H ---
+    public double getH2hHomeWinPercentage() { return h2hHomeWinPercentage; }
+    public void setH2hHomeWinPercentage(double h2hHomeWinPercentage) { this.h2hHomeWinPercentage = h2hHomeWinPercentage; }
+    public double getH2hAwayWinPercentage() { return h2hAwayWinPercentage; }
+    public void setH2hAwayWinPercentage(double h2hAwayWinPercentage) { this.h2hAwayWinPercentage = h2hAwayWinPercentage; }
+    public double getH2hDrawPercentage() { return h2hDrawPercentage; }
+    public void setH2hDrawPercentage(double h2hDrawPercentage) { this.h2hDrawPercentage = h2hDrawPercentage; }
+    public double getH2hAvgGoals() { return h2hAvgGoals; }
+    public void setH2hAvgGoals(double h2hAvgGoals) { this.h2hAvgGoals = h2hAvgGoals; }
 }

@@ -1,16 +1,19 @@
 // src/main/java/com/AiPortal/service/StatisticsService.java
 package com.AiPortal.service;
 
+import com.AiPortal.dto.HeadToHeadStatsDto;
 import com.AiPortal.dto.LeagueStatsGroupDto;
 import com.AiPortal.dto.MatchStatisticsDto;
 import com.AiPortal.dto.PlayerMatchStatisticsDto;
 import com.AiPortal.dto.TeamStatisticsDto;
 import com.AiPortal.entity.Fixture;
+import com.AiPortal.entity.HeadToHeadStats;
 import com.AiPortal.entity.MatchStatistics;
 import com.AiPortal.entity.Player;
 import com.AiPortal.entity.PlayerMatchStatistics;
 import com.AiPortal.entity.TeamStatistics;
 import com.AiPortal.repository.FixtureRepository;
+import com.AiPortal.repository.HeadToHeadStatsRepository;
 import com.AiPortal.repository.MatchStatisticsRepository;
 import com.AiPortal.repository.PlayerMatchStatisticsRepository;
 import com.AiPortal.repository.PlayerRepository;
@@ -36,6 +39,7 @@ public class StatisticsService {
     private final FixtureRepository fixtureRepository;
     private final PlayerMatchStatisticsRepository playerMatchStatsRepository;
     private final PlayerRepository playerRepository;
+    private final HeadToHeadStatsRepository h2hStatsRepository;
 
     @Autowired
     public StatisticsService(
@@ -43,32 +47,27 @@ public class StatisticsService {
             MatchStatisticsRepository matchStatisticsRepository,
             FixtureRepository fixtureRepository,
             PlayerMatchStatisticsRepository playerMatchStatsRepository,
-            PlayerRepository playerRepository
+            PlayerRepository playerRepository,
+            HeadToHeadStatsRepository h2hStatsRepository // <-- Ny
     ) {
         this.teamStatisticsRepository = teamStatisticsRepository;
         this.matchStatisticsRepository = matchStatisticsRepository;
         this.fixtureRepository = fixtureRepository;
         this.playerMatchStatsRepository = playerMatchStatsRepository;
         this.playerRepository = playerRepository;
+        this.h2hStatsRepository = h2hStatsRepository; // <-- Ny
     }
 
-    /**
-     * NY METODE: Henter all spillerstatistikk for en gitt kamp.
-     * @param fixtureId ID-en til kampen.
-     * @return En liste med DTOer som inneholder statistikk for hver spiller.
-     */
     public List<PlayerMatchStatisticsDto> getPlayerStatisticsForFixture(Long fixtureId) {
         List<PlayerMatchStatistics> stats = playerMatchStatsRepository.findAllByFixtureId(fixtureId);
         if (stats.isEmpty()) {
             return List.of();
         }
 
-        // For å unngå N+1-kall, henter vi alle relevante spillere i ett kall
         List<Integer> playerIds = stats.stream().map(PlayerMatchStatistics::getPlayerId).collect(Collectors.toList());
         Map<Integer, Player> playerMap = playerRepository.findAllById(playerIds).stream()
                 .collect(Collectors.toMap(Player::getId, Function.identity()));
 
-        // Konverterer til DTOs og legger til spillernavn fra map-et
         return stats.stream()
                 .map(stat -> convertPlayerStatsToDto(stat, playerMap.get(stat.getPlayerId())))
                 .collect(Collectors.toList());
@@ -107,6 +106,29 @@ public class StatisticsService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * NY METODE: Henter H2H-statistikk for en gitt kamp.
+     * @param fixtureId ID-en til kampen.
+     * @return En Optional som inneholder DTO-en hvis data finnes.
+     */
+    public Optional<HeadToHeadStatsDto> getHeadToHeadStats(Long fixtureId) {
+        // Bruker 'findAllByFixtureIdIn' for å dra nytte av EAGER fetching satt opp i entiteten om mulig
+        // og for å holde API-et konsistent med andre metoder.
+        return h2hStatsRepository.findAllByFixtureIdIn(List.of(fixtureId)).stream()
+                .findFirst()
+                .map(this::convertToH2HDto);
+    }
+
+    private HeadToHeadStatsDto convertToH2HDto(HeadToHeadStats stats) {
+        return new HeadToHeadStatsDto(
+                stats.getMatchesPlayed(),
+                stats.getTeam1Wins(),
+                stats.getTeam2Wins(),
+                stats.getDraws(),
+                stats.getAvgTotalGoals()
+        );
+    }
+
     public Optional<TeamStatisticsDto> getTeamInfo(Integer teamId) {
         return teamStatisticsRepository.findTopByTeamId(teamId)
                 .map(this::convertToDto);
@@ -122,9 +144,12 @@ public class StatisticsService {
     }
 
     private MatchStatisticsDto convertMatchStatsToDto(MatchStatistics stats) {
+        // En mer robust måte å finne lagnavn på, unngår Optional-problemer
         String teamName = teamStatisticsRepository.findTopByTeamId(stats.getTeamId())
                 .map(TeamStatistics::getTeamName)
-                .orElse("Ukjent Lag");
+                .orElseGet(() -> fixtureRepository.findById(stats.getFixtureId())
+                        .map(f -> f.getHomeTeamId().equals(stats.getTeamId()) ? f.getHomeTeamName() : f.getAwayTeamName())
+                        .orElse("Ukjent Lag"));
 
         return new MatchStatisticsDto(
                 teamName, stats.getShotsOnGoal(), stats.getShotsOffGoal(), stats.getTotalShots(),

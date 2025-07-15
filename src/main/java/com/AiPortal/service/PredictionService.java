@@ -12,9 +12,6 @@ import reactor.core.publisher.Mono;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * En dedikert tjeneste for å kommunisere med Python-baserte prediksjonsmodeller.
- */
 @Service
 public class PredictionService {
 
@@ -25,14 +22,11 @@ public class PredictionService {
     public PredictionService(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.webClient = WebClient.builder()
-                .baseUrl("http://localhost:5001") // Pek mot Python-appen
+                .baseUrl("http://localhost:5001")
                 .defaultHeader("Content-Type", "application/json")
                 .build();
     }
 
-    /**
-     * DTO for å representere sannsynlighetene returnert fra ML-modellen.
-     */
     public static class MLProbabilities {
         public final double homeWin;
         public final double draw;
@@ -45,11 +39,19 @@ public class PredictionService {
         }
     }
 
-    /**
-     * Kaller prediksjons-endepunktet for å få sannsynligheter for kampresultat.
-     * @param features Et kart med alle features for kampen.
-     * @return En Optional som inneholder MLProbabilities hvis kallet var vellykket.
-     */
+    // --- NY DTO for Over/Under-sannsynligheter ---
+    public static class OverUnderProbabilities {
+        public final double under;
+        public final double over;
+
+        public OverUnderProbabilities(double under, double over) {
+            this.under = under;
+            this.over = over;
+        }
+    }
+    // ---------------------------------------------
+
+
     public Optional<MLProbabilities> getMatchOutcomeProbabilities(Map<String, Object> features) {
         try {
             String jsonResponse = webClient.post()
@@ -57,7 +59,7 @@ public class PredictionService {
                     .bodyValue(features)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(); // block() er ok her, da dette vil bli kalt innenfor en større, asynkron jobb.
+                    .block();
 
             if (jsonResponse == null) {
                 return Optional.empty();
@@ -73,8 +75,37 @@ public class PredictionService {
             return Optional.of(new MLProbabilities(homeWin, draw, awayWin));
 
         } catch (Exception e) {
-            log.error("Kunne ikke hente ML-prediksjon. Feil: {}", e.getMessage());
+            log.error("Kunne ikke hente kampvinner-prediksjon. Feil: {}", e.getMessage());
             return Optional.empty();
         }
     }
+
+    // --- NY METODE for å hente Over/Under-prediksjoner ---
+    public Optional<OverUnderProbabilities> getOverUnderProbabilities(Map<String, Object> features) {
+        try {
+            String jsonResponse = webClient.post()
+                    .uri("/predict/over_under") // Kaller det nye endepunktet
+                    .bodyValue(features)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            if (jsonResponse == null) {
+                return Optional.empty();
+            }
+
+            JsonNode root = objectMapper.readTree(jsonResponse);
+            JsonNode probsNode = root.path("probabilities");
+
+            double under = probsNode.path("under_2_5").asDouble();
+            double over = probsNode.path("over_2_5").asDouble();
+
+            return Optional.of(new OverUnderProbabilities(under, over));
+
+        } catch (Exception e) {
+            log.error("Kunne ikke hente Over/Under-prediksjon. Feil: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+    // ----------------------------------------------------
 }

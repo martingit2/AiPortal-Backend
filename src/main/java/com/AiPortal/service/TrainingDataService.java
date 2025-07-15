@@ -2,14 +2,8 @@
 package com.AiPortal.service;
 
 import com.AiPortal.dto.TrainingDataDto;
-import com.AiPortal.entity.Fixture;
-import com.AiPortal.entity.Injury;
-import com.AiPortal.entity.MatchStatistics;
-import com.AiPortal.entity.PlayerMatchStatistics;
-import com.AiPortal.repository.FixtureRepository;
-import com.AiPortal.repository.InjuryRepository;
-import com.AiPortal.repository.MatchStatisticsRepository;
-import com.AiPortal.repository.PlayerMatchStatisticsRepository;
+import com.AiPortal.entity.*;
+import com.AiPortal.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -30,17 +24,24 @@ public class TrainingDataService {
     private final MatchStatisticsRepository matchStatsRepository;
     private final InjuryRepository injuryRepository;
     private final PlayerMatchStatisticsRepository playerMatchStatsRepository;
+    private final HeadToHeadStatsRepository h2hStatsRepository; // NYTT REPOSITORY
 
-    public TrainingDataService(FixtureRepository fixtureRepository, MatchStatisticsRepository matchStatsRepository, InjuryRepository injuryRepository, PlayerMatchStatisticsRepository playerMatchStatsRepository) {
+    public TrainingDataService(FixtureRepository fixtureRepository,
+                               MatchStatisticsRepository matchStatsRepository,
+                               InjuryRepository injuryRepository,
+                               PlayerMatchStatisticsRepository playerMatchStatsRepository,
+                               HeadToHeadStatsRepository h2hStatsRepository) { // NY INJEKSJON
         this.fixtureRepository = fixtureRepository;
         this.matchStatsRepository = matchStatsRepository;
         this.injuryRepository = injuryRepository;
         this.playerMatchStatsRepository = playerMatchStatsRepository;
+        this.h2hStatsRepository = h2hStatsRepository; // NYTT
     }
 
     public List<TrainingDataDto> buildTrainingSet() {
-        log.info("---[SPILLERDATA-OPPDATERT] Starter bygging av treningssett ---");
+        log.info("--- [DB-BASERT H2H] Starter bygging av treningssett ---");
 
+        // Steg 1: Hent all data fra databasen i effektive bulk-kall
         List<Fixture> allCompletedFixtures = fixtureRepository.findByStatusIn(FINISHED_STATUSES);
         log.info("Fant {} ferdigspilte kamper.", allCompletedFixtures.size());
         if (allCompletedFixtures.isEmpty()) {
@@ -49,34 +50,21 @@ public class TrainingDataService {
 
         List<Long> allFixtureIds = allCompletedFixtures.stream().map(Fixture::getId).collect(Collectors.toList());
 
-        List<MatchStatistics> allTeamStats = matchStatsRepository.findAllByFixtureIdIn(allFixtureIds);
-        log.info("Fant {} rader med lag-statistikk.", allTeamStats.size());
-
-        List<PlayerMatchStatistics> allPlayerStats = playerMatchStatsRepository.findAllByFixtureIdIn(allFixtureIds);
-        log.info("Fant {} rader med spiller-statistikk.", allPlayerStats.size());
-
-        List<Injury> allInjuries = injuryRepository.findAllByFixtureIdIn(allFixtureIds);
-        log.info("Fant {} skadeoppføringer.", allInjuries.size());
-
-        Map<Long, List<MatchStatistics>> teamStatsByFixtureId = allTeamStats.stream()
-                .collect(Collectors.groupingBy(MatchStatistics::getFixtureId));
-
-        Map<Long, List<PlayerMatchStatistics>> playerStatsByFixtureId = allPlayerStats.stream()
-                .collect(Collectors.groupingBy(PlayerMatchStatistics::getFixtureId));
-
-        Map<Long, Map<Integer, Long>> injuriesByFixtureAndTeam = allInjuries.stream()
-                .collect(Collectors.groupingBy(Injury::getFixtureId,
-                        Collectors.groupingBy(Injury::getTeamId, Collectors.counting())));
+        Map<Long, List<MatchStatistics>> teamStatsByFixtureId = matchStatsRepository.findAllByFixtureIdIn(allFixtureIds).stream().collect(Collectors.groupingBy(MatchStatistics::getFixtureId));
+        Map<Long, List<PlayerMatchStatistics>> playerStatsByFixtureId = playerMatchStatsRepository.findAllByFixtureIdIn(allFixtureIds).stream().collect(Collectors.groupingBy(PlayerMatchStatistics::getFixtureId));
+        Map<Long, Map<Integer, Long>> injuriesByFixtureAndTeam = injuryRepository.findAllByFixtureIdIn(allFixtureIds).stream().collect(Collectors.groupingBy(Injury::getFixtureId, Collectors.groupingBy(Injury::getTeamId, Collectors.counting())));
+        Map<Long, HeadToHeadStats> h2hByFixtureId = h2hStatsRepository.findAllByFixtureIdIn(allFixtureIds).stream().collect(Collectors.toMap(h2h -> h2h.getFixture().getId(), h2h -> h2h));
 
         Map<Integer, List<Fixture>> fixturesByTeamId = new HashMap<>();
-        for (Fixture f : allCompletedFixtures) {
+        allCompletedFixtures.forEach(f -> {
             fixturesByTeamId.computeIfAbsent(f.getHomeTeamId(), k -> new ArrayList<>()).add(f);
             fixturesByTeamId.computeIfAbsent(f.getAwayTeamId(), k -> new ArrayList<>()).add(f);
-        }
+        });
         fixturesByTeamId.values().forEach(list -> list.sort(Comparator.comparing(Fixture::getDate).reversed()));
 
-        log.info("Data er pre-prosessert og mappet. Starter feature engineering i minnet.");
+        log.info("All data er hentet fra DB. Starter feature engineering i minnet.");
 
+        // Steg 2: Bygg DTO-er
         List<TrainingDataDto> trainingSet = new ArrayList<>();
         for (Fixture fixture : allCompletedFixtures) {
             if (fixture.getGoalsHome() == null || fixture.getGoalsAway() == null) continue;
@@ -86,9 +74,8 @@ public class TrainingDataService {
             dto.setLeagueId(fixture.getLeagueId());
             dto.setSeason(fixture.getSeason());
 
-            TeamFeatureSet homeFeatures = calculateFeaturesForTeamInMemory(
-                    fixture.getHomeTeamId(), fixture, fixturesByTeamId, teamStatsByFixtureId, playerStatsByFixtureId, injuriesByFixtureAndTeam
-            );
+            // Sett form-features
+            TeamFeatureSet homeFeatures = calculateFeaturesForTeamInMemory(fixture.getHomeTeamId(), fixture, fixturesByTeamId, teamStatsByFixtureId, playerStatsByFixtureId, injuriesByFixtureAndTeam);
             dto.setHomeAvgShotsOnGoal(homeFeatures.avgShotsOnGoal);
             dto.setHomeAvgShotsOffGoal(homeFeatures.avgShotsOffGoal);
             dto.setHomeAvgCorners(homeFeatures.avgCorners);
@@ -96,9 +83,7 @@ public class TrainingDataService {
             dto.setHomePlayersAvgRating(homeFeatures.avgPlayerRating);
             dto.setHomePlayersAvgGoals(homeFeatures.avgPlayerGoals);
 
-            TeamFeatureSet awayFeatures = calculateFeaturesForTeamInMemory(
-                    fixture.getAwayTeamId(), fixture, fixturesByTeamId, teamStatsByFixtureId, playerStatsByFixtureId, injuriesByFixtureAndTeam
-            );
+            TeamFeatureSet awayFeatures = calculateFeaturesForTeamInMemory(fixture.getAwayTeamId(), fixture, fixturesByTeamId, teamStatsByFixtureId, playerStatsByFixtureId, injuriesByFixtureAndTeam);
             dto.setAwayAvgShotsOnGoal(awayFeatures.avgShotsOnGoal);
             dto.setAwayAvgShotsOffGoal(awayFeatures.avgShotsOffGoal);
             dto.setAwayAvgCorners(awayFeatures.avgCorners);
@@ -106,14 +91,36 @@ public class TrainingDataService {
             dto.setAwayPlayersAvgRating(awayFeatures.avgPlayerRating);
             dto.setAwayPlayersAvgGoals(awayFeatures.avgPlayerGoals);
 
-            if (fixture.getGoalsHome() > fixture.getGoalsAway()) dto.setResult("HOME_WIN");
-            else if (fixture.getGoalsAway() > fixture.getGoalsHome()) dto.setResult("AWAY_WIN");
-            else dto.setResult("DRAW");
+            // Sett H2H-features fra databasen
+            HeadToHeadStats h2hStats = h2hByFixtureId.get(fixture.getId());
+            if (h2hStats != null && h2hStats.getMatchesPlayed() > 0) {
+                dto.setH2hHomeWinPercentage((double) h2hStats.getTeam1Wins() / h2hStats.getMatchesPlayed());
+                dto.setH2hAwayWinPercentage((double) h2hStats.getTeam2Wins() / h2hStats.getMatchesPlayed());
+                dto.setH2hDrawPercentage((double) h2hStats.getDraws() / h2hStats.getMatchesPlayed());
+                dto.setH2hAvgGoals(h2hStats.getAvgTotalGoals());
+            } else {
+                // Sett default-verdier hvis ingen H2H-data finnes
+                dto.setH2hHomeWinPercentage(0.0);
+                dto.setH2hAwayWinPercentage(0.0);
+                dto.setH2hDrawPercentage(0.0);
+                dto.setH2hAvgGoals(0.0);
+            }
+
+            // Sett resultat og mål
+            if (fixture.getGoalsHome() > fixture.getGoalsAway()) {
+                dto.setResult("HOME_WIN");
+            } else if (fixture.getGoalsAway() > fixture.getGoalsHome()) {
+                dto.setResult("AWAY_WIN");
+            } else {
+                dto.setResult("DRAW");
+            }
+            dto.setGoalsHome(fixture.getGoalsHome());
+            dto.setGoalsAway(fixture.getGoalsAway());
 
             trainingSet.add(dto);
         }
 
-        log.info("Fullførte bygging av treningssett med {} rader. Antall DB-kall: 4", trainingSet.size());
+        log.info("Fullførte bygging av treningssett med {} rader. Antall DB-kall: 5", trainingSet.size());
         return trainingSet;
     }
 

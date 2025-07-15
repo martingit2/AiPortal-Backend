@@ -119,18 +119,29 @@ public class FootballApiService {
                 .timeout(API_TIMEOUT);
     }
 
-    /**
-     * NY METODE: Henter tabell (standings) for en hel liga/sesong.
-     * @param leagueId ID-en til ligaen.
-     * @param season Årstall for sesongen.
-     * @return Et Mono med JSON-svaret.
-     */
     public Mono<ResponseEntity<String>> getStandings(String leagueId, String season) {
         return this.webClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/standings")
                         .queryParam("league", leagueId)
                         .queryParam("season", season)
+                        .build())
+                .retrieve()
+                .toEntity(String.class)
+                .timeout(API_TIMEOUT);
+    }
+
+    /**
+     * NY METODE: Henter Head-to-Head data for to lag.
+     * @param teamIds En streng på formatet "teamId1-teamId2".
+     * @return Et Mono med JSON-svaret.
+     */
+    public Mono<ResponseEntity<String>> getHeadToHead(String teamIds) {
+        return this.webClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/fixtures/headtohead")
+                        .queryParam("h2h", teamIds)
+                        .queryParam("last", "10") // Henter de siste 10 H2H-kampene
                         .build())
                 .retrieve()
                 .toEntity(String.class)
