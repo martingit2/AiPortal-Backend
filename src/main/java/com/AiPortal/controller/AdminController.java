@@ -49,10 +49,6 @@ public class AdminController {
         return ResponseEntity.ok("Api-Sports Odds-bot kjøring manuelt utløst.");
     }
 
-    /**
-     * NYTT ENDEPUNKT: Trigger innhenting av odds fra Pinnacle-APIet.
-     * @return En bekreftelse på at jobben er startet.
-     */
     @PostMapping("/run-pinnacle-odds-bot")
     public ResponseEntity<String> runPinnacleOddsBot() {
         scheduledBotRunner.fetchPinnacleOdds();
@@ -63,5 +59,15 @@ public class AdminController {
     public ResponseEntity<String> runHistoricalCollector() {
         scheduledBotRunner.runHistoricalDataCollector();
         return ResponseEntity.ok("Historisk datainnsamler er forberedt og jobber er lagt i kø. Prosessering skjer i bakgrunnen.");
+    }
+
+    /**
+     * NYTT ENDEPUNKT: Kjører en engangsjobb for å rydde opp i ufullstendige fixtures.
+     * @return En bekreftelse med antall slettede rader.
+     */
+    @PostMapping("/cleanup-incomplete-fixtures")
+    public ResponseEntity<String> cleanupIncompleteFixtures() {
+        int count = scheduledBotRunner.cleanupIncompleteFixtures();
+        return ResponseEntity.ok("Opprydding fullført. Slettet " + count + " ufullstendige kamper.");
     }
 }

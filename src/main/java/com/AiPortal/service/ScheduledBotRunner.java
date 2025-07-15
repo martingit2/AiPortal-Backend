@@ -73,10 +73,57 @@ public class ScheduledBotRunner {
         this.historicalDataWorker = historicalDataWorker;
     }
 
+    @Transactional
+    public int cleanupIncompleteFixtures() {
+        List<Fixture> incompleteFixtures = fixtureRepository.findByHomeTeamIdIsNullAndAwayTeamIdIsNull();
+        if (!incompleteFixtures.isEmpty()) {
+            fixtureRepository.deleteAll(incompleteFixtures);
+            log.info("Slettet {} ufullstendige fixture-rader.", incompleteFixtures.size());
+            return incompleteFixtures.size();
+        }
+        log.info("Fant ingen ufullstendige fixtures å slette.");
+        return 0;
+    }
+
+    private Optional<Fixture> findExistingFixtureFromPinnacleEvent(JsonNode event) {
+        String homeTeamRaw = event.path("home").asText();
+        String awayTeamRaw = event.path("away").asText();
+        String startsString = event.path("starts").asText();
+        if (homeTeamRaw.isEmpty() || awayTeamRaw.isEmpty() || startsString.isEmpty()) {
+            return Optional.empty();
+        }
+        String normalizedHome = normalizeTeamName(homeTeamRaw);
+        String normalizedAway = normalizeTeamName(awayTeamRaw);
+        Instant eventTime = Instant.parse(startsString + "Z");
+
+        log.trace("---[PINNACLE MATCHER] Leter etter kamp: {} ({}) vs {} ({}) rundt {}",
+                homeTeamRaw, normalizedHome, awayTeamRaw, normalizedAway, eventTime);
+
+        List<Fixture> candidates = fixtureRepository.findAllByDateBetween(
+                eventTime.minus(12, ChronoUnit.HOURS),
+                eventTime.plus(12, ChronoUnit.HOURS)
+        );
+
+        Optional<Fixture> foundFixture = candidates.stream()
+                .filter(fixture ->
+                        normalizeTeamName(fixture.getHomeTeamName()).equals(normalizedHome) &&
+                                normalizeTeamName(fixture.getAwayTeamName()).equals(normalizedAway)
+                )
+                .findFirst();
+
+        if (foundFixture.isPresent()) {
+            log.info("---[PINNACLE MATCHER] Fant match! Pinnacle: '{} vs {}' -> DB Fixture ID: {}", homeTeamRaw, awayTeamRaw, foundFixture.get().getId());
+        } else {
+            log.warn("---[PINNACLE MATCHER] Fant IKKE match for Pinnacle-kamp: '{} vs {}'", homeTeamRaw, awayTeamRaw);
+        }
+        return foundFixture;
+    }
+
+    // ... (og alle de andre metodene, som fetchPinnacleOdds, etc.)
+    // La meg lime inn resten for å være 100% sikker ...
     private <T> List<List<T>> partitionList(List<T> list, final int size) {
         return new ArrayList<>(IntStream.range(0, list.size()).boxed().collect(Collectors.groupingBy(e -> e / size, Collectors.mapping(list::get, Collectors.toList()))).values());
     }
-
     private String normalizeTeamName(String name) {
         if (name == null) return "";
         String normalized = Normalizer.normalize(name, Normalizer.Form.NFD);
@@ -84,7 +131,6 @@ public class ScheduledBotRunner {
                 .replaceAll("[^a-zA-Z0-9]", "")
                 .toLowerCase();
     }
-
     @Async("taskExecutor")
     @Scheduled(fixedRate = 300000, initialDelay = 30000)
     public void fetchPinnacleOdds() {
@@ -94,27 +140,21 @@ public class ScheduledBotRunner {
                 BotConfiguration.SourceType.PINNACLE_ODDS
         );
         if (pinnacleBots.isEmpty()) return;
-
         for (BotConfiguration bot : pinnacleBots) {
             String sportId = bot.getSourceIdentifier();
             Long sinceTimestamp = bot.getSinceTimestamp();
             log.info("---[PINNACLE V5] Kjører bot '{}' for sportId {}. Siste timestamp: {}", bot.getName(), sportId, sinceTimestamp);
-
             try {
                 ResponseEntity<String> marketsResponse = pinnacleApiService.getMarkets(sportId, sinceTimestamp).block();
                 processPinnacleResponse(marketsResponse, bot, this::processPinnacleMarketEvent);
-
                 Thread.sleep(1000);
-
                 ResponseEntity<String> specialsResponse = pinnacleApiService.getSpecialMarkets(sportId, sinceTimestamp).block();
                 processPinnacleResponse(specialsResponse, bot, this::processPinnacleSpecialEvent);
-
             } catch (Exception e) {
                 log.error("---[PINNACLE V5] API-kall feilet for bot {}: {}", bot.getName(), e.getMessage());
             }
         }
     }
-
     private void processPinnacleResponse(ResponseEntity<String> responseEntity, BotConfiguration bot, java.util.function.Consumer<JsonNode> eventProcessor) {
         try {
             if (responseEntity == null || !responseEntity.getStatusCode().is2xxSuccessful() || responseEntity.getBody() == null) {
@@ -139,7 +179,6 @@ public class ScheduledBotRunner {
             log.error("---[PINNACLE V5] Feil ved parsing av Pinnacle-respons: {}", e.getMessage(), e);
         }
     }
-
     @Transactional
     public void processPinnacleMarketEvent(JsonNode event) {
         findExistingFixtureFromPinnacleEvent(event).ifPresent(fixture -> {
@@ -154,7 +193,6 @@ public class ScheduledBotRunner {
             }
         });
     }
-
     @Transactional
     public void processPinnacleSpecialEvent(JsonNode special) {
         if (!special.has("event") || special.get("event").isNull()) return;
@@ -165,7 +203,6 @@ public class ScheduledBotRunner {
             savePinnacleOdds(fixture, pinnacleBookmakerId, betName, lines, "special");
         });
     }
-
     private void savePinnacleOdds(Fixture fixture, Integer bookmakerId, String betName, JsonNode oddsNode, String type) {
         if (oddsNode.isMissingNode() || oddsNode.isEmpty() || matchOddsRepository.existsByFixtureIdAndBookmakerIdAndBetName(fixture.getId(), bookmakerId, betName)) {
             return;
@@ -183,7 +220,6 @@ public class ScheduledBotRunner {
             log.error("Kunne ikke konvertere odds-data til JSON for kamp {}", fixture.getId(), e);
         }
     }
-
     private String convertPinnacleNodeToJsonString(JsonNode oddsNode, String type) throws JsonProcessingException {
         ArrayNode valuesArray = objectMapper.createArrayNode();
         if ("moneyline".equals(type)) {
@@ -229,26 +265,6 @@ public class ScheduledBotRunner {
         }
         return objectMapper.writeValueAsString(valuesArray);
     }
-
-    private Optional<Fixture> findExistingFixtureFromPinnacleEvent(JsonNode event) {
-        String homeTeamRaw = event.path("home").asText();
-        String awayTeamRaw = event.path("away").asText();
-        String startsString = event.path("starts").asText();
-        if (homeTeamRaw.isEmpty() || awayTeamRaw.isEmpty() || startsString.isEmpty()) {
-            return Optional.empty();
-        }
-        String normalizedHome = normalizeTeamName(homeTeamRaw);
-        String normalizedAway = normalizeTeamName(awayTeamRaw);
-        Instant eventTime = Instant.parse(startsString + "Z");
-        List<Fixture> candidates = fixtureRepository.findAllByDateBetween(eventTime.minus(12, ChronoUnit.HOURS), eventTime.plus(12, ChronoUnit.HOURS));
-        return candidates.stream()
-                .filter(fixture ->
-                        normalizeTeamName(fixture.getHomeTeamName()).equals(normalizedHome) &&
-                                normalizeTeamName(fixture.getAwayTeamName()).equals(normalizedAway)
-                )
-                .findFirst();
-    }
-
     @Transactional
     public void runHistoricalDataCollector() {
         log.info("---[PRODUCER V2] Forbereder historisk datainnsamling.---");
@@ -419,7 +435,6 @@ public class ScheduledBotRunner {
             } catch (Exception e) { log.error("Feil ved parsing av spilltyper", e); }
         });
     }
-
     @Scheduled(cron = "0 0 1 * * *", zone = "Europe/Oslo")
     public void fetchDailyOdds() {
         List<String> datesToFetch = IntStream.range(0, 7).mapToObj(i -> LocalDate.now().plusDays(i).toString()).collect(Collectors.toList());
@@ -451,16 +466,13 @@ public class ScheduledBotRunner {
             }
         }
     }
-
     @Transactional
     public void processSingleFixtureWithOdds(JsonNode oddsResponse) {
         long fixtureId = oddsResponse.path("fixture").path("id").asLong();
         if (fixtureId == 0) return;
         Fixture fixture = saveOrUpdateFixtureFromOddsResponse(oddsResponse);
-
         JsonNode bookmakers = oddsResponse.path("bookmakers");
         if (!bookmakers.isArray()) return;
-
         for (JsonNode bookmakerNode : bookmakers) {
             int bookmakerId = bookmakerNode.path("id").asInt();
             for (JsonNode betNode : bookmakerNode.path("bets")) {
@@ -492,7 +504,6 @@ public class ScheduledBotRunner {
             }
         }
     }
-
     @Transactional
     public Fixture saveOrUpdateFixtureFromOddsResponse(JsonNode oddsResponse) {
         JsonNode fixtureNode = oddsResponse.path("fixture");
@@ -511,7 +522,6 @@ public class ScheduledBotRunner {
         fixture.setAwayTeamName(teamsNode.path("away").path("name").asText());
         return fixtureRepository.save(fixture);
     }
-
     @Async("taskExecutor")
     @Scheduled(cron = "0 15 3 * * *", zone = "Europe/Oslo")
     @Transactional
@@ -558,7 +568,6 @@ public class ScheduledBotRunner {
             }
         }
     }
-
     @Scheduled(fixedRate = 600000, initialDelay = 120000)
     @Transactional
     public void runSportDataBots() {
@@ -583,7 +592,6 @@ public class ScheduledBotRunner {
             }, error -> log.error("Feil ved henting av sportsdata for bot '{}'", bot.getName(), error));
         }
     }
-
     @Transactional
     public void saveTeamStatisticsFromStanding(JsonNode standingNode, BotConfiguration sourceBot, String leagueName, int leagueId, int season) {
         int teamId = standingNode.path("team").path("id").asInt();

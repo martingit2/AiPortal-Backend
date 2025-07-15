@@ -23,21 +23,19 @@ public interface FixtureRepository extends JpaRepository<Fixture, Long> {
     List<Fixture> findLastNCompletedFixturesByTeamAndSeason(@Param("teamId") Integer teamId, @Param("season") Integer season, Pageable pageable);
 
     Page<Fixture> findByDateAfterOrderByDateAsc(Instant now, Pageable pageable);
-
     List<Fixture> findAllByDateAfterOrderByDateAsc(Instant now);
-
     Page<Fixture> findByDateBeforeAndStatusInOrderByDateDesc(Instant now, List<String> finishedStatus, Pageable pageable);
-
     List<Fixture> findByStatusIn(List<String> statuses);
 
     @Query("SELECT f FROM Fixture f WHERE (f.homeTeamId = :teamId OR f.awayTeamId = :teamId) AND f.status IN ('FT', 'AET', 'PEN') AND f.date < :beforeDate ORDER BY f.date DESC")
     List<Fixture> findLastNCompletedFixturesByTeamBeforeDate(@Param("teamId") Integer teamId, @Param("beforeDate") Instant beforeDate, Pageable pageable);
 
     Optional<Fixture> findFirstByHomeTeamNameAndAwayTeamNameAndDateBetween(String homeTeam, String awayTeam, Instant start, Instant end);
+    List<Fixture> findAllByDateBetween(Instant start, Instant end);
 
     /**
-     * NY METODE: Henter alle kamper innenfor et gitt tidsvindu.
-     * Brukes for å finne kandidatkamper for matching med Pinnacle.
+     * NY METODE: Finner ufullstendige fixtures (opprettet av Pinnacle-boten)
+     * ved å se etter rader hvor team ID-er er null.
      */
-    List<Fixture> findAllByDateBetween(Instant start, Instant end);
+    List<Fixture> findByHomeTeamIdIsNullAndAwayTeamIdIsNull();
 }
