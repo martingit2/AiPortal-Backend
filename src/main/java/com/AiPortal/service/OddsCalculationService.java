@@ -240,7 +240,7 @@ public class OddsCalculationService {
         boolean isEmpty = false;
 
         TeamFeatureSet(boolean isEmpty) { this.isEmpty = isEmpty; }
-        TeamFeatureSet() {} // Tom konstruktør
+        TeamFeatureSet() {}
 
         TeamFeatureSet(double avgSot, double avgSotOff, double avgCorn, int injuries, double avgRating, double avgGoals, double avgPoss) {
             this.avgShotsOnGoal = avgSot; this.avgShotsOffGoal = avgSotOff; this.avgCorners = avgCorn;
