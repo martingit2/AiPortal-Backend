@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 
@@ -33,79 +34,49 @@ public class PredictionService {
         public final double awayWin;
 
         public MLProbabilities(double homeWin, double draw, double awayWin) {
-            this.homeWin = homeWin;
-            this.draw = draw;
-            this.awayWin = awayWin;
+            this.homeWin = homeWin; this.draw = draw; this.awayWin = awayWin;
         }
     }
 
-    // --- NY DTO for Over/Under-sannsynligheter ---
     public static class OverUnderProbabilities {
         public final double under;
         public final double over;
 
         public OverUnderProbabilities(double under, double over) {
-            this.under = under;
-            this.over = over;
+            this.under = under; this.over = over;
         }
     }
-    // ---------------------------------------------
-
 
     public Optional<MLProbabilities> getMatchOutcomeProbabilities(Map<String, Object> features) {
         try {
-            String jsonResponse = webClient.post()
-                    .uri("/predict/match_outcome")
-                    .bodyValue(features)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            if (jsonResponse == null) {
-                return Optional.empty();
-            }
-
-            JsonNode root = objectMapper.readTree(jsonResponse);
-            JsonNode probsNode = root.path("probabilities");
-
-            double homeWin = probsNode.path("home_win").asDouble();
-            double draw = probsNode.path("draw").asDouble();
-            double awayWin = probsNode.path("away_win").asDouble();
-
-            return Optional.of(new MLProbabilities(homeWin, draw, awayWin));
-
+            String jsonResponse = webClient.post().uri("/predict/match_outcome").bodyValue(features)
+                    .retrieve().bodyToMono(String.class).timeout(Duration.ofSeconds(10)).block();
+            if (jsonResponse == null) return Optional.empty();
+            JsonNode probsNode = objectMapper.readTree(jsonResponse).path("probabilities");
+            return Optional.of(new MLProbabilities(
+                    probsNode.path("home_win").asDouble(0.0),
+                    probsNode.path("draw").asDouble(0.0),
+                    probsNode.path("away_win").asDouble(0.0)
+            ));
         } catch (Exception e) {
             log.error("Kunne ikke hente kampvinner-prediksjon. Feil: {}", e.getMessage());
             return Optional.empty();
         }
     }
 
-    // --- NY METODE for å hente Over/Under-prediksjoner ---
     public Optional<OverUnderProbabilities> getOverUnderProbabilities(Map<String, Object> features) {
         try {
-            String jsonResponse = webClient.post()
-                    .uri("/predict/over_under") // Kaller det nye endepunktet
-                    .bodyValue(features)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            if (jsonResponse == null) {
-                return Optional.empty();
-            }
-
-            JsonNode root = objectMapper.readTree(jsonResponse);
-            JsonNode probsNode = root.path("probabilities");
-
-            double under = probsNode.path("under_2_5").asDouble();
-            double over = probsNode.path("over_2_5").asDouble();
-
-            return Optional.of(new OverUnderProbabilities(under, over));
-
+            String jsonResponse = webClient.post().uri("/predict/over_under").bodyValue(features)
+                    .retrieve().bodyToMono(String.class).timeout(Duration.ofSeconds(10)).block();
+            if (jsonResponse == null) return Optional.empty();
+            JsonNode probsNode = objectMapper.readTree(jsonResponse).path("probabilities");
+            return Optional.of(new OverUnderProbabilities(
+                    probsNode.path("under_2_5").asDouble(0.0),
+                    probsNode.path("over_2_5").asDouble(0.0)
+            ));
         } catch (Exception e) {
             log.error("Kunne ikke hente Over/Under-prediksjon. Feil: {}", e.getMessage());
             return Optional.empty();
         }
     }
-    // ----------------------------------------------------
 }

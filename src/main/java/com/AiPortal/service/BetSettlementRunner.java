@@ -23,7 +23,6 @@ public class BetSettlementRunner {
 
     private final PlacedBetRepository placedBetRepository;
     private final FixtureRepository fixtureRepository;
-    // Senere: private final DiscordNotificationService discordService;
 
     public BetSettlementRunner(PlacedBetRepository placedBetRepository, FixtureRepository fixtureRepository) {
         this.placedBetRepository = placedBetRepository;
@@ -62,7 +61,6 @@ public class BetSettlementRunner {
 
                 log.info("BET WON: ID {}, Profit: {:.2f}", bet.getId(), profit);
             } else {
-                // Her kan man legge til logikk for PUSH/VOID, men for nå antar vi tap
                 bet.setStatus(PlacedBet.BetStatus.LOST);
                 bet.setProfit(-bet.getStake());
 
@@ -72,24 +70,32 @@ public class BetSettlementRunner {
                 log.info("BET LOST: ID {}, Loss: {:.2f}", bet.getId(), bet.getStake());
             }
             bet.setSettledAt(Instant.now());
-            // Repository lagrer endringene i portfolio automatisk pga. @Transactional
-
-            // Her vil vi senere kalle: discordService.sendSettledBetNotification(bet);
         }
         log.info("--- [SETTLEMENT] Fullførte avgjøring av {} bets. ---", pendingBets.size());
     }
 
+    // --- OPPDATERT METODE ---
     private boolean checkWinCondition(PlacedBet bet, Fixture fixture) {
-        if ("MATCH_WINNER".equalsIgnoreCase(bet.getMarket())) {
-            Integer homeGoals = fixture.getGoalsHome();
-            Integer awayGoals = fixture.getGoalsAway();
-            if (homeGoals == null || awayGoals == null) return false; // Kan ikke avgjøre
+        Integer homeGoals = fixture.getGoalsHome();
+        Integer awayGoals = fixture.getGoalsAway();
+        if (homeGoals == null || awayGoals == null) return false; // Kan ikke avgjøre uten resultat
 
-            if ("HOME_WIN".equals(bet.getSelection()) && homeGoals > awayGoals) return true;
-            if ("AWAY_WIN".equals(bet.getSelection()) && awayGoals > homeGoals) return true;
-            if ("DRAW".equals(bet.getSelection()) && homeGoals.equals(awayGoals)) return true;
+        String market = bet.getMarket() != null ? bet.getMarket() : "";
+        String selection = bet.getSelection();
+
+        if (market.contains("Kampvinner")) {
+            if ("HOME_WIN".equals(selection) && homeGoals > awayGoals) return true;
+            if ("AWAY_WIN".equals(selection) && awayGoals > homeGoals) return true;
+            if ("DRAW".equals(selection) && homeGoals.equals(awayGoals)) return true;
         }
-        // TODO: Legg til logikk for andre markeder som Over/Under her
+        else if (market.contains("Over/Under")) {
+            // Antar at markedet er O/U 2.5 for nå
+            int totalGoals = homeGoals + awayGoals;
+            if ("OVER".equalsIgnoreCase(selection) && totalGoals > 2.5) return true;
+            if ("UNDER".equalsIgnoreCase(selection) && totalGoals < 2.5) return true;
+            // Legg til logikk for PUSH (nøyaktig 2.5) hvis du ønsker det
+        }
+
         return false;
     }
 }

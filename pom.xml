@@ -68,6 +68,12 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Jackson-modul for å håndtere Hibernate-spesifikke typer og lazy-loading -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-hibernate5-jakarta</artifactId>
+        </dependency>
+
         <!-- For å bruke WebClient for reaktive, non-blocking HTTP-kall -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

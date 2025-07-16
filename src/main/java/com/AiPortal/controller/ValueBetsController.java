@@ -33,7 +33,9 @@ public class ValueBetsController {
     private final OddsCalculationService oddsCalculationService;
     private final MatchOddsRepository matchOddsRepository;
 
-    public ValueBetsController(FixtureRepository fixtureRepository, OddsCalculationService oddsCalculationService, MatchOddsRepository matchOddsRepository) {
+    public ValueBetsController(FixtureRepository fixtureRepository,
+                               OddsCalculationService oddsCalculationService,
+                               MatchOddsRepository matchOddsRepository) {
         this.fixtureRepository = fixtureRepository;
         this.oddsCalculationService = oddsCalculationService;
         this.matchOddsRepository = matchOddsRepository;
@@ -41,39 +43,28 @@ public class ValueBetsController {
 
     @GetMapping
     public ResponseEntity<List<ValueBetDto>> findValueBets() {
-
-        // --- NY, SMARTERE STRATEGI ---
-        // 1. Finn ID-ene til alle kommende kamper som FAKTISK HAR ODDS.
         List<Long> fixtureIdsWithOdds = matchOddsRepository.findDistinctFixtureIdsWithUpcomingOdds(Instant.now());
-
         if (fixtureIdsWithOdds.isEmpty()) {
-            log.info("Fant ingen kommende kamper med odds i databasen. Returnerer tom liste.");
+            log.info("ValueBets: Ingen kommende kamper med odds funnet. Returnerer tom liste.");
             return ResponseEntity.ok(List.of());
         }
 
-        // 2. Hent de fulle Fixture-objektene for disse ID-ene.
         List<Fixture> fixturesToAnalyze = fixtureRepository.findAllById(fixtureIdsWithOdds);
-
-        // 3. Sorter listen etter dato og ta de første 50 for å begrense analysen.
         fixturesToAnalyze.sort(Comparator.comparing(Fixture::getDate));
         List<Fixture> upcomingFixtures = fixturesToAnalyze.stream().limit(50).collect(Collectors.toList());
-        // --- SLUTT PÅ NY STRATEGI ---
 
-        log.info("Fant {} kamp(er) med odds for parallell analyse.", upcomingFixtures.size());
+        log.info("ValueBets: Analyserer {} kamper.", upcomingFixtures.size());
 
-        List<ValueBetDto> valueBets = Flux.fromIterable(upcomingFixtures)
+        List<ValueBetDto> allValueBets = Flux.fromIterable(upcomingFixtures)
                 .parallel()
                 .runOn(Schedulers.boundedElastic())
-                .flatMap(fixture -> {
-                    log.info("Prosessering startet for kamp ID: {}", fixture.getId());
-                    return Flux.fromIterable(oddsCalculationService.calculateValue(fixture));
-                })
+                .flatMap(fixture -> Flux.fromIterable(oddsCalculationService.calculateValue(fixture)))
                 .sequential()
                 .collectList()
-                .block(Duration.ofSeconds(60));
+                .block(Duration.ofMinutes(2));
 
-        log.info("Returnerer {} value bet-signaler etter parallell prosessering.", valueBets != null ? valueBets.size() : 0);
+        log.info("ValueBets: Returnerer {} value bet-signaler etter parallell prosessering.", allValueBets != null ? allValueBets.size() : 0);
 
-        return ResponseEntity.ok(valueBets);
+        return ResponseEntity.ok(allValueBets);
     }
 }
