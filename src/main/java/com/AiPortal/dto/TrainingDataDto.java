@@ -1,12 +1,6 @@
 // src/main/java/com/AiPortal/dto/TrainingDataDto.java
 package com.AiPortal.dto;
 
-/**
- * Data Transfer Object for å sende et komplett, flatt datasett for én kamp
- * fra Java-backenden til Python-tjenesten for maskinlæring.
- *
- * Denne versjonen er utvidet med H2H (Head-to-Head) statistikk.
- */
 public class TrainingDataDto {
 
     // Identifikasjon
@@ -29,11 +23,13 @@ public class TrainingDataDto {
     private double awayPlayersAvgRating;
     private double awayPlayersAvgGoals;
 
-    // --- NYE H2H FEATURES ---
     private double h2hHomeWinPercentage;
     private double h2hAwayWinPercentage;
     private double h2hDrawPercentage;
     private double h2hAvgGoals;
+    private double homeAvgPossession;
+    private double awayAvgPossession;
+
 
     // Label (Målet vi skal predikere)
     private String result;
@@ -79,8 +75,6 @@ public class TrainingDataDto {
     public void setGoalsHome(Integer goalsHome) { this.goalsHome = goalsHome; }
     public Integer getGoalsAway() { return goalsAway; }
     public void setGoalsAway(Integer goalsAway) { this.goalsAway = goalsAway; }
-
-    // --- NYE GETTERS OG SETTERS for H2H ---
     public double getH2hHomeWinPercentage() { return h2hHomeWinPercentage; }
     public void setH2hHomeWinPercentage(double h2hHomeWinPercentage) { this.h2hHomeWinPercentage = h2hHomeWinPercentage; }
     public double getH2hAwayWinPercentage() { return h2hAwayWinPercentage; }
@@ -89,4 +83,8 @@ public class TrainingDataDto {
     public void setH2hDrawPercentage(double h2hDrawPercentage) { this.h2hDrawPercentage = h2hDrawPercentage; }
     public double getH2hAvgGoals() { return h2hAvgGoals; }
     public void setH2hAvgGoals(double h2hAvgGoals) { this.h2hAvgGoals = h2hAvgGoals; }
+    public double getHomeAvgPossession() { return homeAvgPossession; }
+    public void setHomeAvgPossession(double homeAvgPossession) { this.homeAvgPossession = homeAvgPossession; }
+    public double getAwayAvgPossession() { return awayAvgPossession; }
+    public void setAwayAvgPossession(double awayAvgPossession) { this.awayAvgPossession = awayAvgPossession; }
 }

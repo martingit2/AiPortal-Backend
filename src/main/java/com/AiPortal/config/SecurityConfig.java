@@ -29,7 +29,8 @@ public class SecurityConfig {
                         // KUN public og ml-data skal være offentlige
                         .requestMatchers(
                                 "/api/v1/public/**",
-                                "/api/v1/ml-data/**"
+                                "/api/v1/ml-data/**",
+                                "/api/v1/models/register"
                         ).permitAll()
 
                         // Alle andre forespørsler, inkludert /admin/**, krever autentisering
