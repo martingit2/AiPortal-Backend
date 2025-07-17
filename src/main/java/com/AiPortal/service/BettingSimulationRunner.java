@@ -2,6 +2,7 @@
 package com.AiPortal.service;
 
 import com.AiPortal.dto.ValueBetDto;
+import com.AiPortal.entity.AnalysisModel;
 import com.AiPortal.entity.Fixture;
 import com.AiPortal.entity.PlacedBet;
 import com.AiPortal.entity.VirtualPortfolio;
@@ -18,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class BettingSimulationRunner {
@@ -44,20 +44,20 @@ public class BettingSimulationRunner {
     }
 
     @Transactional
-    @Scheduled(fixedRate = 60000, initialDelay = 10000) // Kjører hvert minutt for testing
+    @Scheduled(fixedRate = 300000, initialDelay = 30000) // Kjører hvert 5. minutt
     public void findAndPlaceBets() {
-        log.info("--- [BETTING SIM] Starter jobb for å finne og plassere bets ---");
+        log.info("--- [BETTING SIM V2] Starter jobb for å finne og plassere bets ---");
 
         List<VirtualPortfolio> activePortfolios = portfolioRepository.findActivePortfoliosWithModel();
 
         if (activePortfolios.isEmpty()) {
-            log.info("--- [BETTING SIM] Ingen aktive porteføljer funnet. Avslutter jobb. ---");
+            log.info("--- [BETTING SIM V2] Ingen aktive porteføljer funnet. Avslutter jobb. ---");
             return;
         }
 
         List<Long> fixtureIdsWithOdds = matchOddsRepository.findDistinctFixtureIdsWithUpcomingOdds(Instant.now());
         if (fixtureIdsWithOdds.isEmpty()) {
-            log.info("--- [BETTING SIM] Ingen kommende kamper med odds funnet. Avslutter jobb. ---");
+            log.info("--- [BETTING SIM V2] Ingen kommende kamper med odds funnet. Avslutter jobb. ---");
             return;
         }
 
@@ -65,25 +65,40 @@ public class BettingSimulationRunner {
         fixturesToAnalyze.sort(Comparator.comparing(Fixture::getDate));
 
         for (VirtualPortfolio portfolio : activePortfolios) {
-            log.info("--- [BETTING SIM] Analyserer for portefølje: {}", portfolio.getName());
+            AnalysisModel model = portfolio.getModel(); // Modellen er EAGER lastet, ingen ekstra DB-kall
+            if (model == null) {
+                log.warn("Portefølje {} (ID: {}) mangler en tilknyttet modell. Hopper over.", portfolio.getName(), portfolio.getId());
+                continue;
+            }
+
+            log.info("--- [BETTING SIM V2] Analyserer for portefølje '{}' med modell '{}' ({}) ---",
+                    portfolio.getName(), model.getModelName(), model.getMarketType());
 
             for (Fixture fixture : fixturesToAnalyze) {
+                // Sjekk om det allerede er plassert et bet for denne kampen for denne porteføljen
                 boolean alreadyBet = placedBetRepository.findByPortfolioIdOrderByPlacedAtDesc(portfolio.getId())
                         .stream().anyMatch(b -> b.getFixtureId().equals(fixture.getId()));
 
                 if (alreadyBet) {
-                    continue;
+                    continue; // Hopp over hvis bet allerede er plassert
                 }
 
-                // Tilbakestilt til å kalle den enklere metoden
-                List<ValueBetDto> valueBets = oddsCalculationService.calculateValue(fixture);
+                // *** DEN KRITISKE ENDRINGEN ER HER ***
+                // Vi sender nå med modell-informasjon til kalkulasjonstjenesten
+                List<ValueBetDto> valueBets = oddsCalculationService.calculateValue(
+                        fixture,
+                        model.getModelName(),      // Send med modellens filnavn
+                        model.getMarketType()      // Send med modellens markedstype
+                );
 
-                for (ValueBetDto valueBet : valueBets) {
-                    processSingleValueBet(valueBet, portfolio);
+                // Siden kallet nå er spesifikt, forventer vi kun én DTO (eller ingen)
+                if (!valueBets.isEmpty()) {
+                    processSingleValueBet(valueBets.get(0), portfolio);
+                    // Hvis vi bare vil ha ett bet per kjøring, kan vi 'break' her for å gå til neste portefølje
                 }
             }
         }
-        log.info("--- [BETTING SIM] Fullførte jobb. ---");
+        log.info("--- [BETTING SIM V2] Fullførte jobb. ---");
     }
 
     private void processSingleValueBet(ValueBetDto valueBet, VirtualPortfolio portfolio) {
@@ -96,33 +111,39 @@ public class BettingSimulationRunner {
         String marketDesc = valueBet.getMarketDescription() != null ? valueBet.getMarketDescription() : "";
 
         if (marketDesc.contains("Over/Under")) {
+            market = "Over/Under 2.5";
+            // valueHome representerer Over, valueAway representerer Under
             if (valueBet.getValueHome() > bestValue) {
                 bestValue = valueBet.getValueHome(); bestSelection = "OVER"; bestOdds = valueBet.getMarketHomeOdds();
-                modelProb = isFinite(valueBet.getAracanixHomeOdds()) ? 1 / valueBet.getAracanixHomeOdds() : 0; market = "Over/Under 2.5";
+                modelProb = isFinite(valueBet.getAracanixHomeOdds()) ? 1 / valueBet.getAracanixHomeOdds() : 0;
             }
             if (valueBet.getValueAway() > bestValue) {
                 bestValue = valueBet.getValueAway(); bestSelection = "UNDER"; bestOdds = valueBet.getMarketAwayOdds();
-                modelProb = isFinite(valueBet.getAracanixAwayOdds()) ? 1 / valueBet.getAracanixAwayOdds() : 0; market = "Over/Under 2.5";
+                modelProb = isFinite(valueBet.getAracanixAwayOdds()) ? 1 / valueBet.getAracanixAwayOdds() : 0;
             }
         }
         else if (marketDesc.contains("Kampvinner")) {
+            market = "Kampvinner";
             if (valueBet.getValueHome() > bestValue) {
                 bestValue = valueBet.getValueHome(); bestSelection = "HOME_WIN"; bestOdds = valueBet.getMarketHomeOdds();
-                modelProb = isFinite(valueBet.getAracanixHomeOdds()) ? 1 / valueBet.getAracanixHomeOdds() : 0; market = "Kampvinner";
+                modelProb = isFinite(valueBet.getAracanixHomeOdds()) ? 1 / valueBet.getAracanixHomeOdds() : 0;
             }
             if (valueBet.getValueDraw() > bestValue) {
                 bestValue = valueBet.getValueDraw(); bestSelection = "DRAW"; bestOdds = valueBet.getMarketDrawOdds();
-                modelProb = isFinite(valueBet.getAracanixDrawOdds()) ? 1 / valueBet.getAracanixDrawOdds() : 0; market = "Kampvinner";
+                modelProb = isFinite(valueBet.getAracanixDrawOdds()) ? 1 / valueBet.getAracanixDrawOdds() : 0;
             }
             if (valueBet.getValueAway() > bestValue) {
                 bestValue = valueBet.getValueAway(); bestSelection = "AWAY_WIN"; bestOdds = valueBet.getMarketAwayOdds();
-                modelProb = isFinite(valueBet.getAracanixAwayOdds()) ? 1 / valueBet.getAracanixAwayOdds() : 0; market = "Kampvinner";
+                modelProb = isFinite(valueBet.getAracanixAwayOdds()) ? 1 / valueBet.getAracanixAwayOdds() : 0;
             }
         }
 
-        if (bestSelection != null && bestValue > 0.0) { // Bruker 0.0 som terskel for testing
-            double stake = portfolio.getCurrentBalance() * 0.01;
-            if (stake < 1.0) return;
+        if (bestSelection != null && bestValue > 0.05) { // Bruker 5% value som en fornuftig terskel
+            double stake = portfolio.getCurrentBalance() * 0.01; // Kelly-lignende: 1% av bankroll
+            if (stake < 1.0 || portfolio.getCurrentBalance() < stake) {
+                log.warn("Portefølje {} har ikke nok midler for å plassere innsats på {:.2f}", portfolio.getName(), stake);
+                return;
+            }
 
             PlacedBet newBet = new PlacedBet();
             newBet.setPortfolio(portfolio);
@@ -134,18 +155,19 @@ public class BettingSimulationRunner {
             newBet.setModelProbability(modelProb);
             newBet.setValue(bestValue);
             newBet.setStatus(PlacedBet.BetStatus.PENDING);
+            newBet.setPlacedAt(Instant.now());
 
             placedBetRepository.save(newBet);
 
             portfolio.setCurrentBalance(portfolio.getCurrentBalance() - stake);
             portfolio.setTotalBets(portfolio.getTotalBets() + 1);
 
-            log.info("PLACED BET: {} på {} for kamp {}. Stake: {:.2f}, Odds: {:.2f}, Value: {:.2f}%",
-                    bestSelection, market, valueBet.getFixtureId(), stake, bestOdds, bestValue * 100);
+            log.info("PLACED BET: Portefølje '{}' plasserte '{}' på '{}' for kamp {}. Stake: {:.2f}, Odds: {:.2f}, Value: {:.2f}%",
+                    portfolio.getName(), market, bestSelection, valueBet.getFixtureId(), stake, bestOdds, bestValue * 100);
         }
     }
 
     private boolean isFinite(double value) {
-        return Double.isFinite(value);
+        return Double.isFinite(value) && value > 0;
     }
 }

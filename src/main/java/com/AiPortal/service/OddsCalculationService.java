@@ -12,7 +12,12 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -20,6 +25,10 @@ public class OddsCalculationService {
 
     private static final Logger log = LoggerFactory.getLogger(OddsCalculationService.class);
     private static final int FORM_MATCH_COUNT = 10;
+
+    // Konstanter for standardmodeller som skal brukes i den generelle analysen
+    private static final String DEFAULT_MATCH_WINNER_MODEL = "football_predictor_v5_h2h.joblib";
+    private static final String DEFAULT_OVER_UNDER_MODEL = "over_under_v3_possession.joblib";
 
     private final MatchOddsRepository oddsRepository;
     private final FixtureRepository fixtureRepository;
@@ -50,41 +59,159 @@ public class OddsCalculationService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * NY, OVERLASTET METODE: Kjører en generell analyse med standardmodeller.
+     * Denne metoden brukes av ValueBetsController for å gi en generell oversikt i UI.
+     * Den fikser kompileringsfeilen ved å tilby den "gamle" metodesignaturen.
+     *
+     * @param fixture Kampen som skal analyseres.
+     * @return En liste med alle funnede verdispill fra alle standardmodeller.
+     */
     @Transactional(readOnly = true)
     public List<ValueBetDto> calculateValue(Fixture fixture) {
+        log.debug("Kjører generell analyse for fixture {}", fixture.getId());
+        List<ValueBetDto> allValueBets = new ArrayList<>();
+
+        // Kjør analyse for Kampvinner
+        allValueBets.addAll(calculateValue(fixture, DEFAULT_MATCH_WINNER_MODEL, "MATCH_WINNER"));
+
+        // Kjør analyse for Over/Under
+        allValueBets.addAll(calculateValue(fixture, DEFAULT_OVER_UNDER_MODEL, "OVER_UNDER_2.5"));
+
+        return allValueBets;
+    }
+
+    /**
+     * REFAKTORERT METODE: Utfører en modell-spesifikk analyse.
+     * Denne metoden er nå kjernen i den modell-spesifikke dataflyten.
+     *
+     * @param fixture    Kampen som skal analyseres.
+     * @param modelName  Filnavnet til modellen som skal brukes.
+     * @param marketType Typen marked modellen er trent for.
+     * @return En liste med funnede verdispill (typisk 0 eller 1 per kall).
+     */
+    @Transactional(readOnly = true)
+    public List<ValueBetDto> calculateValue(Fixture fixture, String modelName, String marketType) {
+        Map<String, Object> features = buildFeatures(fixture);
+        if (features.isEmpty()) {
+            log.warn("Kunne ikke bygge features for fixture {}. Kan ikke analysere.", fixture.getId());
+            return Collections.emptyList();
+        }
+
+        Optional<JsonNode> predictionResponse = predictionService.getPredictions(modelName, features);
+
+        if (predictionResponse.isEmpty()) {
+            log.warn("Mottok ingen prediksjon fra ML-tjenesten for fixture {} med modell {}", fixture.getId(), modelName);
+            return Collections.emptyList();
+        }
+
+        JsonNode probabilitiesNode = predictionResponse.get().path("probabilities");
+        if (probabilitiesNode.isMissingNode()) {
+            log.error("JSON-respons fra ML-tjeneste mangler 'probabilities'-nøkkel for fixture {}", fixture.getId());
+            return Collections.emptyList();
+        }
+
         List<MatchOdds> allOddsForFixture = oddsRepository.findAllByFixtureId(fixture.getId());
         if (allOddsForFixture.isEmpty()) {
             return Collections.emptyList();
         }
 
-        Map<String, Object> features = buildFeatures(fixture);
-        if (features.isEmpty()) {
-            return Collections.emptyList();
+        if ("MATCH_WINNER".equalsIgnoreCase(marketType)) {
+            return allOddsForFixture.stream()
+                    .filter(o -> "Match Winner".equalsIgnoreCase(o.getBetName()))
+                    .findFirst()
+                    .map(marketOdds -> buildMatchWinnerValueBetDto(fixture, marketOdds, probabilitiesNode))
+                    .map(List::of)
+                    .orElse(Collections.emptyList());
         }
 
-        List<ValueBetDto> foundValueBets = new ArrayList<>();
+        if ("OVER_UNDER_2.5".equalsIgnoreCase(marketType)) {
+            return allOddsForFixture.stream()
+                    .filter(o -> "Total Goals".equalsIgnoreCase(o.getBetName()))
+                    .findFirst()
+                    .map(marketOdds -> buildOverUnderValueBetDto(fixture, marketOdds, probabilitiesNode))
+                    .map(List::of)
+                    .orElse(Collections.emptyList());
+        }
 
-        // Kjør kampvinner-analyse
-        predictionService.getMatchOutcomeProbabilities(features)
-                .flatMap(probs ->
-                        allOddsForFixture.stream()
-                                .filter(o -> "Match Winner".equalsIgnoreCase(o.getBetName()))
-                                .findFirst()
-                                .map(marketOdds -> buildMatchWinnerValueBetDto(fixture, marketOdds, probs))
-                )
-                .ifPresent(foundValueBets::add);
+        log.warn("Ukjent marketType '{}' mottatt for analyse av fixture {}", marketType, fixture.getId());
+        return Collections.emptyList();
+    }
 
-        // Kjør Over/Under-analyse
-        predictionService.getOverUnderProbabilities(features)
-                .flatMap(probs ->
-                        allOddsForFixture.stream()
-                                .filter(o -> "Total Goals".equalsIgnoreCase(o.getBetName()))
-                                .findFirst()
-                                .map(marketOdds -> buildOverUnderValueBetDto(fixture, marketOdds, probs))
-                )
-                .ifPresent(foundValueBets::add);
+    private ValueBetDto buildMatchWinnerValueBetDto(Fixture fixture, MatchOdds marketOdds, JsonNode probsNode) {
+        ValueBetDto valueBet = new ValueBetDto();
+        valueBet.setFixtureId(fixture.getId());
+        valueBet.setHomeTeamName(fixture.getHomeTeamName());
+        valueBet.setAwayTeamName(fixture.getAwayTeamName());
+        valueBet.setFixtureDate(fixture.getDate());
+        valueBet.setMarketDescription("Kampvinner");
+        valueBet.setBookmakerName(marketOdds.getBookmaker() != null ? marketOdds.getBookmaker().getName() : "Ukjent");
 
-        return foundValueBets;
+        try {
+            JsonNode oddsData = objectMapper.readTree(marketOdds.getOddsData());
+            for (JsonNode value : oddsData) {
+                switch (value.path("name").asText()) {
+                    case "Home": valueBet.setMarketHomeOdds(value.path("odds").asDouble()); break;
+                    case "Draw": valueBet.setMarketDrawOdds(value.path("odds").asDouble()); break;
+                    case "Away": valueBet.setMarketAwayOdds(value.path("odds").asDouble()); break;
+                }
+            }
+        } catch (Exception e) {
+            log.error("Kunne ikke parse kampvinner-oddsData for fixture {}: {}", fixture.getId(), e.getMessage());
+        }
+
+        // *** OPPDATERT LOGIKK ***
+        // Tolker den standardiserte "class_N"-responsen fra Python.
+        // VIKTIG: Denne rekkefølgen må matche rekkefølgen til LabelEncoder i Python.
+        // Standard er alfabetisk: AWAY_WIN (0), DRAW (1), HOME_WIN (2).
+        double probAway = probsNode.path("class_0").asDouble(0.0);
+        double probDraw = probsNode.path("class_1").asDouble(0.0);
+        double probHome = probsNode.path("class_2").asDouble(0.0);
+
+        valueBet.setAracanixHomeOdds(probHome > 0 ? 1 / probHome : Double.POSITIVE_INFINITY);
+        valueBet.setAracanixDrawOdds(probDraw > 0 ? 1 / probDraw : Double.POSITIVE_INFINITY);
+        valueBet.setAracanixAwayOdds(probAway > 0 ? 1 / probAway : Double.POSITIVE_INFINITY);
+        valueBet.setValueHome((valueBet.getMarketHomeOdds() * probHome) - 1);
+        valueBet.setValueDraw((valueBet.getMarketDrawOdds() * probDraw) - 1);
+        valueBet.setValueAway((valueBet.getMarketAwayOdds() * probAway) - 1);
+
+        return valueBet;
+    }
+
+    private ValueBetDto buildOverUnderValueBetDto(Fixture fixture, MatchOdds marketOdds, JsonNode probsNode) {
+        ValueBetDto valueBet = new ValueBetDto();
+        valueBet.setFixtureId(fixture.getId());
+        valueBet.setHomeTeamName(fixture.getHomeTeamName());
+        valueBet.setAwayTeamName(fixture.getAwayTeamName());
+        valueBet.setFixtureDate(fixture.getDate());
+        valueBet.setMarketDescription("Over/Under 2.5");
+        valueBet.setBookmakerName(marketOdds.getBookmaker() != null ? marketOdds.getBookmaker().getName() : "Ukjent");
+
+        try {
+            JsonNode oddsData = objectMapper.readTree(marketOdds.getOddsData());
+            for (JsonNode value : oddsData) {
+                if ("2.5".equals(value.path("points").asText())) {
+                    if ("Over".equalsIgnoreCase(value.path("name").asText())) {
+                        valueBet.setMarketHomeOdds(value.path("odds").asDouble());
+                    } else if ("Under".equalsIgnoreCase(value.path("name").asText())) {
+                        valueBet.setMarketAwayOdds(value.path("odds").asDouble());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Kunne ikke parse O/U-oddsData for fixture {}: {}", fixture.getId(), e.getMessage());
+        }
+
+        // For binære modeller: class_0 er Under, class_1 er Over.
+        double probUnder = probsNode.path("class_0").asDouble(0.0);
+        double probOver = probsNode.path("class_1").asDouble(0.0);
+
+        valueBet.setAracanixHomeOdds(probOver > 0 ? 1 / probOver : Double.POSITIVE_INFINITY); // Home = Over
+        valueBet.setAracanixAwayOdds(probUnder > 0 ? 1 / probUnder : Double.POSITIVE_INFINITY); // Away = Under
+        valueBet.setValueHome((valueBet.getMarketHomeOdds() * probOver) - 1); // ValueHome = Over
+        valueBet.setValueAway((valueBet.getMarketAwayOdds() * probUnder) - 1); // ValueAway = Under
+
+        return valueBet;
     }
 
     private Map<String, Object> buildFeatures(Fixture fixture) {
@@ -103,7 +230,6 @@ public class OddsCalculationService {
         features.put("homePlayersAvgRating", homeFeatures.avgPlayerRating);
         features.put("homePlayersAvgGoals", homeFeatures.avgPlayerGoals);
         features.put("homeAvgPossession", homeFeatures.avgPossession);
-
         features.put("awayAvgShotsOnGoal", awayFeatures.avgShotsOnGoal);
         features.put("awayAvgShotsOffGoal", awayFeatures.avgShotsOffGoal);
         features.put("awayAvgCorners", awayFeatures.avgCorners);
@@ -154,84 +280,16 @@ public class OddsCalculationService {
                     try { return Double.parseDouble(s.getBallPossession().replace("%", "")); } catch (Exception e) { return 0.0; }
                 })
                 .average().orElse(0.0);
-
         double avgRating = playerStats.stream()
                 .filter(ps -> ps.getTeamId().equals(teamId) && ps.getRating() != null)
                 .mapToDouble(ps -> { try { return Double.parseDouble(ps.getRating()); } catch (Exception e) { return 0.0; } })
                 .average().orElse(0.0);
-
         double avgGoals = playerStats.stream()
                 .filter(ps -> ps.getTeamId().equals(teamId) && ps.getGoalsTotal() != null)
                 .mapToDouble(PlayerMatchStatistics::getGoalsTotal).average().orElse(0.0);
-
         int injuries = injuryRepository.countByFixtureIdAndTeamId(contextFixture.getId(), teamId);
 
         return new TeamFeatureSet(avgSot, avgSotOff, avgCorn, injuries, avgRating, avgGoals, avgPoss);
-    }
-
-    private ValueBetDto buildMatchWinnerValueBetDto(Fixture fixture, MatchOdds marketOdds, PredictionService.MLProbabilities probs) {
-        ValueBetDto valueBet = new ValueBetDto();
-        valueBet.setFixtureId(fixture.getId());
-        valueBet.setHomeTeamName(fixture.getHomeTeamName());
-        valueBet.setAwayTeamName(fixture.getAwayTeamName());
-        valueBet.setFixtureDate(fixture.getDate());
-        valueBet.setMarketDescription("Kampvinner");
-        valueBet.setBookmakerName(marketOdds.getBookmaker() != null ? marketOdds.getBookmaker().getName() : "Ukjent");
-
-        try {
-            JsonNode oddsData = objectMapper.readTree(marketOdds.getOddsData());
-            for (JsonNode value : oddsData) {
-                switch (value.path("name").asText()) {
-                    case "Home": valueBet.setMarketHomeOdds(value.path("odds").asDouble()); break;
-                    case "Draw": valueBet.setMarketDrawOdds(value.path("odds").asDouble()); break;
-                    case "Away": valueBet.setMarketAwayOdds(value.path("odds").asDouble()); break;
-                }
-            }
-        } catch (Exception e) {
-            log.error("Kunne ikke parse kampvinner-oddsData for fixture {}: {}", fixture.getId(), e.getMessage());
-        }
-
-        valueBet.setAracanixHomeOdds(probs.homeWin > 0 ? 1 / probs.homeWin : Double.POSITIVE_INFINITY);
-        valueBet.setAracanixDrawOdds(probs.draw > 0 ? 1 / probs.draw : Double.POSITIVE_INFINITY);
-        valueBet.setAracanixAwayOdds(probs.awayWin > 0 ? 1 / probs.awayWin : Double.POSITIVE_INFINITY);
-        valueBet.setValueHome((valueBet.getMarketHomeOdds() * probs.homeWin) - 1);
-        valueBet.setValueDraw((valueBet.getMarketDrawOdds() * probs.draw) - 1);
-        valueBet.setValueAway((valueBet.getMarketAwayOdds() * probs.awayWin) - 1);
-
-        return valueBet;
-    }
-
-    private ValueBetDto buildOverUnderValueBetDto(Fixture fixture, MatchOdds marketOdds, PredictionService.OverUnderProbabilities probs) {
-        ValueBetDto valueBet = new ValueBetDto();
-        valueBet.setFixtureId(fixture.getId());
-        valueBet.setHomeTeamName(fixture.getHomeTeamName());
-        valueBet.setAwayTeamName(fixture.getAwayTeamName());
-        valueBet.setFixtureDate(fixture.getDate());
-        valueBet.setMarketDescription("Over/Under 2.5");
-        valueBet.setBookmakerName(marketOdds.getBookmaker() != null ? marketOdds.getBookmaker().getName() : "Ukjent");
-
-        try {
-            JsonNode oddsData = objectMapper.readTree(marketOdds.getOddsData());
-            for (JsonNode value : oddsData) {
-                if ("2.5".equals(value.path("points").asText())) {
-                    if ("Over".equalsIgnoreCase(value.path("name").asText())) {
-                        valueBet.setMarketHomeOdds(value.path("odds").asDouble());
-                    } else if ("Under".equalsIgnoreCase(value.path("name").asText())) {
-                        valueBet.setMarketAwayOdds(value.path("odds").asDouble());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.error("Kunne ikke parse O/U-oddsData for fixture {}: {}", fixture.getId(), e.getMessage());
-        }
-
-        valueBet.setAracanixHomeOdds(probs.over > 0 ? 1 / probs.over : Double.POSITIVE_INFINITY);
-        valueBet.setAracanixAwayOdds(probs.under > 0 ? 1 / probs.under : Double.POSITIVE_INFINITY);
-
-        valueBet.setValueHome((valueBet.getMarketHomeOdds() * probs.over) - 1);
-        valueBet.setValueAway((valueBet.getMarketAwayOdds() * probs.under) - 1);
-
-        return valueBet;
     }
 
     private static class TeamFeatureSet {
@@ -240,11 +298,15 @@ public class OddsCalculationService {
         boolean isEmpty = false;
 
         TeamFeatureSet(boolean isEmpty) { this.isEmpty = isEmpty; }
-        TeamFeatureSet() {}
 
         TeamFeatureSet(double avgSot, double avgSotOff, double avgCorn, int injuries, double avgRating, double avgGoals, double avgPoss) {
-            this.avgShotsOnGoal = avgSot; this.avgShotsOffGoal = avgSotOff; this.avgCorners = avgCorn;
-            this.injuryCount = injuries; this.avgPlayerRating = avgRating; this.avgPlayerGoals = avgGoals; this.avgPossession = avgPoss;
+            this.avgShotsOnGoal = avgSot;
+            this.avgShotsOffGoal = avgSotOff;
+            this.avgCorners = avgCorn;
+            this.injuryCount = injuries;
+            this.avgPlayerRating = avgRating;
+            this.avgPlayerGoals = avgGoals;
+            this.avgPossession = avgPoss;
         }
     }
 }

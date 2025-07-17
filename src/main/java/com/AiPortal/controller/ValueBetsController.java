@@ -58,6 +58,7 @@ public class ValueBetsController {
         List<ValueBetDto> allValueBets = Flux.fromIterable(upcomingFixtures)
                 .parallel()
                 .runOn(Schedulers.boundedElastic())
+                // Dette kallet vil nå være gyldig igjen etter at vi oppdaterer OddsCalculationService
                 .flatMap(fixture -> Flux.fromIterable(oddsCalculationService.calculateValue(fixture)))
                 .sequential()
                 .collectList()
