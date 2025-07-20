@@ -27,7 +27,6 @@ public class AdminController {
         this.betSettlementRunner = betSettlementRunner;
     }
 
-    // --- NYE ENDEPUNKTER FOR BETTING-SIMULERING ---
 
     @PostMapping("/run-betting-simulation")
     public ResponseEntity<String> runBettingSimulation() {
@@ -41,7 +40,7 @@ public class AdminController {
         return ResponseEntity.ok("Bet-avgjøringsjobb manuelt utløst. Sjekk logger for detaljer.");
     }
 
-    // ---------------------------------------------
+    // --- UENDREDE ENDEPUNKTER ---
 
     @PostMapping("/run-twitter-bot")
     public ResponseEntity<String> runTwitterBot() {
@@ -67,10 +66,13 @@ public class AdminController {
         return ResponseEntity.ok("Fotball-metadata-bot kjøring manuelt utløst.");
     }
 
+    // *** OPPDATERT METODE FOR Å HÅNDTERE ASYNKRON JOBB ***
     @PostMapping("/run-odds-bot")
     public ResponseEntity<String> runOddsBot() {
         scheduledBotRunner.fetchDailyOdds();
-        return ResponseEntity.ok("Api-Sports Odds-bot kjøring manuelt utløst.");
+        // Returnerer 202 Accepted for å indikere at en bakgrunnsjobb er startet.
+        // Dette løser "loading"-problemet i Postman og connection leak-advarselen.
+        return ResponseEntity.accepted().body("Api-Sports Odds-bot er startet og kjører nå i bakgrunnen. Sjekk logger for fremdrift.");
     }
 
     @PostMapping("/run-pinnacle-odds-bot")

@@ -119,8 +119,6 @@ public class ScheduledBotRunner {
         return foundFixture;
     }
 
-    // ... (og alle de andre metodene, som fetchPinnacleOdds, etc.)
-    // La meg lime inn resten for å være 100% sikker ...
     private <T> List<List<T>> partitionList(List<T> list, final int size) {
         return new ArrayList<>(IntStream.range(0, list.size()).boxed().collect(Collectors.groupingBy(e -> e / size, Collectors.mapping(list::get, Collectors.toList()))).values());
     }
@@ -435,6 +433,9 @@ public class ScheduledBotRunner {
             } catch (Exception e) { log.error("Feil ved parsing av spilltyper", e); }
         });
     }
+
+    // *** OPPDATERT METODE ***
+    @Async("taskExecutor") // Kjører i en egen bakgrunnstråd
     @Scheduled(cron = "0 0 1 * * *", zone = "Europe/Oslo")
     public void fetchDailyOdds() {
         List<String> datesToFetch = IntStream.range(0, 7).mapToObj(i -> LocalDate.now().plusDays(i).toString()).collect(Collectors.toList());
@@ -466,7 +467,9 @@ public class ScheduledBotRunner {
             }
         }
     }
-    @Transactional
+
+    // *** OPPDATERT METODE ***
+    @Transactional // Hver kamp lagres i sin egen, korte transaksjon
     public void processSingleFixtureWithOdds(JsonNode oddsResponse) {
         long fixtureId = oddsResponse.path("fixture").path("id").asLong();
         if (fixtureId == 0) return;
@@ -504,7 +507,8 @@ public class ScheduledBotRunner {
             }
         }
     }
-    @Transactional
+
+    // Denne metoden er nå en hjelpemetode og trenger ikke være transaksjonell selv.
     public Fixture saveOrUpdateFixtureFromOddsResponse(JsonNode oddsResponse) {
         JsonNode fixtureNode = oddsResponse.path("fixture");
         long fixtureId = fixtureNode.path("id").asLong();
@@ -520,8 +524,17 @@ public class ScheduledBotRunner {
         fixture.setHomeTeamName(teamsNode.path("home").path("name").asText());
         fixture.setAwayTeamId(teamsNode.path("away").path("id").asInt());
         fixture.setAwayTeamName(teamsNode.path("away").path("name").asText());
+        // VIKTIG: Legg til oppdatering av mål!
+        JsonNode goalsNode = oddsResponse.path("goals");
+        if (goalsNode.has("home") && !goalsNode.get("home").isNull()) {
+            fixture.setGoalsHome(goalsNode.get("home").asInt());
+        }
+        if (goalsNode.has("away") && !goalsNode.get("away").isNull()) {
+            fixture.setGoalsAway(goalsNode.get("away").asInt());
+        }
         return fixtureRepository.save(fixture);
     }
+
     @Async("taskExecutor")
     @Scheduled(cron = "0 15 3 * * *", zone = "Europe/Oslo")
     @Transactional
