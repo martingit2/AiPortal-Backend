@@ -49,4 +49,10 @@ public class PortfolioController {
     public ResponseEntity<List<PlacedBetDto>> getPortfolioBets(@PathVariable Long id) {
         return ResponseEntity.ok(portfolioService.getBetsForPortfolio(id));
     }
+
+    @GetMapping("/{id}/bets/count-pending")
+    public ResponseEntity<Long> countPendingBetsForPortfolio(@PathVariable Long id) {
+        long count = portfolioService.countPendingBets(id);
+        return ResponseEntity.ok(count);
+    }
 }

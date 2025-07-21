@@ -30,7 +30,9 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/public/**",
                                 "/api/v1/ml-data/**",
-                                "/api/v1/models/register"
+                                "/api/v1/models/register",
+                                "/api/v1/portfolios/**",
+                                "/api/v1/fixtures/upcoming-with-odds"
                         ).permitAll()
 
                         // Alle andre forespørsler, inkludert /admin/**, krever autentisering

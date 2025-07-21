@@ -28,6 +28,7 @@ public class AdminController {
     }
 
 
+
     @PostMapping("/run-betting-simulation")
     public ResponseEntity<String> runBettingSimulation() {
         bettingSimulationRunner.findAndPlaceBets();
@@ -39,8 +40,6 @@ public class AdminController {
         betSettlementRunner.settleBets();
         return ResponseEntity.ok("Bet-avgjøringsjobb manuelt utløst. Sjekk logger for detaljer.");
     }
-
-    // --- UENDREDE ENDEPUNKTER ---
 
     @PostMapping("/run-twitter-bot")
     public ResponseEntity<String> runTwitterBot() {
@@ -54,42 +53,45 @@ public class AdminController {
         return ResponseEntity.ok("Sport-statistikk-bot (enkelt-lag) kjøring manuelt utløst.");
     }
 
-    @PostMapping("/run-league-stats-collector")
-    public ResponseEntity<String> runLeagueStatsCollector() {
-        scheduledBotRunner.runLeagueStatsCollector();
-        return ResponseEntity.ok("Liga-statistikk-innsamler kjøring manuelt utløst. Jobben kjører i bakgrunnen.");
-    }
-
     @PostMapping("/run-metadata-bot")
     public ResponseEntity<String> runMetadataBot() {
         scheduledBotRunner.updateFootballMetadata();
         return ResponseEntity.ok("Fotball-metadata-bot kjøring manuelt utløst.");
     }
 
-    // *** OPPDATERT METODE FOR Å HÅNDTERE ASYNKRON JOBB ***
+    @PostMapping("/cleanup-incomplete-fixtures")
+    public ResponseEntity<String> cleanupIncompleteFixtures() {
+        int count = scheduledBotRunner.cleanupIncompleteFixtures();
+        return ResponseEntity.ok("Opprydding fullført. Slettet " + count + " ufullstendige kamper.");
+    }
+
+    // --- OPPDATERING: Tunge jobber som nå returnerer 202 Accepted ---
+
+    @PostMapping("/run-league-stats-collector")
+    public ResponseEntity<String> runLeagueStatsCollector() {
+        scheduledBotRunner.runLeagueStatsCollector();
+        // OPPDATERING: Returnerer umiddelbart
+        return ResponseEntity.accepted().body("Liga-statistikk-innsamler er startet og kjører nå i bakgrunnen.");
+    }
+
     @PostMapping("/run-odds-bot")
     public ResponseEntity<String> runOddsBot() {
         scheduledBotRunner.fetchDailyOdds();
-        // Returnerer 202 Accepted for å indikere at en bakgrunnsjobb er startet.
-        // Dette løser "loading"-problemet i Postman og connection leak-advarselen.
-        return ResponseEntity.accepted().body("Api-Sports Odds-bot er startet og kjører nå i bakgrunnen. Sjekk logger for fremdrift.");
+        // OPPDATERING: Returnerer umiddelbart
+        return ResponseEntity.accepted().body("Api-Sports Odds-bot er startet og kjører nå i bakgrunnen.");
     }
 
     @PostMapping("/run-pinnacle-odds-bot")
     public ResponseEntity<String> runPinnacleOddsBot() {
         scheduledBotRunner.fetchPinnacleOdds();
-        return ResponseEntity.ok("Pinnacle Odds-bot kjøring manuelt utløst.");
+        // OPPDATERING: Returnerer umiddelbart
+        return ResponseEntity.accepted().body("Pinnacle Odds-bot er startet og kjører nå i bakgrunnen.");
     }
 
     @PostMapping("/run-historical-collector")
     public ResponseEntity<String> runHistoricalCollector() {
         scheduledBotRunner.runHistoricalDataCollector();
-        return ResponseEntity.ok("Historisk datainnsamler er forberedt og jobber er lagt i kø. Prosessering skjer i bakgrunnen.");
-    }
-
-    @PostMapping("/cleanup-incomplete-fixtures")
-    public ResponseEntity<String> cleanupIncompleteFixtures() {
-        int count = scheduledBotRunner.cleanupIncompleteFixtures();
-        return ResponseEntity.ok("Opprydding fullført. Slettet " + count + " ufullstendige kamper.");
+        // OPPDATERING: Returnerer umiddelbart
+        return ResponseEntity.accepted().body("Forberedelse for historisk datainnsamler er startet i bakgrunnen.");
     }
 }

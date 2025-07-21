@@ -11,9 +11,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import reactor.util.retry.Retry;
 
-import java.time.Duration;
+import java.time.Duration; // <-- DEN MANGLENDE IMPORTEN ER NÅ LAGT TIL HER
 import java.time.Instant;
 import java.util.*;
 import java.util.function.Function;
@@ -32,7 +31,7 @@ public class HistoricalDataWorker {
     private final FixtureRepository fixtureRepository;
     private final MatchStatisticsRepository matchStatsRepository;
     private final InjuryRepository injuryRepository;
-    private final HeadToHeadStatsRepository h2hStatsRepository; // NYTT REPOSITORY
+    private final HeadToHeadStatsRepository h2hStatsRepository;
 
     @Autowired
     public HistoricalDataWorker(
@@ -43,7 +42,7 @@ public class HistoricalDataWorker {
             FixtureRepository fixtureRepository,
             MatchStatisticsRepository matchStatsRepository,
             InjuryRepository injuryRepository,
-            HeadToHeadStatsRepository h2hStatsRepository // NY INJEKSJON
+            HeadToHeadStatsRepository h2hStatsRepository
     ) {
         this.footballApiService = footballApiService;
         this.objectMapper = objectMapper;
@@ -52,16 +51,14 @@ public class HistoricalDataWorker {
         this.fixtureRepository = fixtureRepository;
         this.matchStatsRepository = matchStatsRepository;
         this.injuryRepository = injuryRepository;
-        this.h2hStatsRepository = h2hStatsRepository; // NYTT
+        this.h2hStatsRepository = h2hStatsRepository;
     }
 
-    @Transactional
     public void processChunk(PendingFixtureChunk chunk) {
         String idString = chunk.getFixtureIds();
-        log.info("---[WORKER v2 - H2H] Starter prosessering av chunk ID: {} (Kilde: {}) ---", chunk.getId(), chunk.getSourceIdentifier());
+        log.info("---[WORKER v3 Async] Starter prosessering av chunk ID: {} (Kilde: {}) ---", chunk.getId(), chunk.getSourceIdentifier());
 
         try {
-            // Hent og lagre kampdetaljer, spillerstats etc. (som før)
             ResponseEntity<String> detailsResponse = footballApiService.getFixturesByIds(idString).block();
             if (detailsResponse != null && detailsResponse.getBody() != null) {
                 JsonNode bulkFixtures = objectMapper.readTree(detailsResponse.getBody()).path("response");
@@ -74,7 +71,6 @@ public class HistoricalDataWorker {
                 saveAllInjuries(bulkInjuries);
             }
 
-            // NYTT: Hent og lagre H2H-data for kampene i denne chunken
             List<Long> fixtureIdsInChunk = Arrays.stream(idString.split("-"))
                     .map(Long::parseLong)
                     .collect(Collectors.toList());
@@ -84,78 +80,14 @@ public class HistoricalDataWorker {
             chunk.setStatus(PendingFixtureChunk.ChunkStatus.COMPLETED);
 
         } catch (Exception e) {
-            log.error("---[WORKER v2 - H2H] Feil under prosessering av chunk ID: {}. Feil: {}", chunk.getId(), e.getMessage(), e);
+            log.error("---[WORKER v3 Async] Feil under prosessering av chunk ID: {}. Feil: {}", chunk.getId(), e.getMessage(), e);
             chunk.setStatus(PendingFixtureChunk.ChunkStatus.FAILED);
             chunk.setLastErrorMessage(e.getMessage());
         }
     }
 
-    // NY HJELPEMETODE
-    private void saveHeadToHeadData(List<Fixture> fixtures) throws InterruptedException {
-        log.info("Starter H2H-datainnsamling for {} kamper...", fixtures.size());
-        for (Fixture fixture : fixtures) {
-            if (h2hStatsRepository.existsByFixtureId(fixture.getId())) {
-                continue; // Hopp over hvis data allerede finnes
-            }
-
-            String h2hQuery = fixture.getHomeTeamId() + "-" + fixture.getAwayTeamId();
-            try {
-                // Legg til en liten forsinkelse for å respektere rate limits (300/min = 5/sek)
-                Thread.sleep(220);
-
-                ResponseEntity<String> response = footballApiService.getHeadToHead(h2hQuery).block(Duration.ofSeconds(15));
-                if (response != null && response.getBody() != null) {
-                    JsonNode h2hFixtures = objectMapper.readTree(response.getBody()).path("response");
-                    HeadToHeadStats h2hStats = parseAndCreateH2hStats(h2hFixtures, fixture);
-                    h2hStatsRepository.save(h2hStats);
-                    log.info("Lagret H2H-data for fixture ID: {}", fixture.getId());
-                }
-            } catch (Exception e) {
-                log.warn("Kunne ikke hente eller lagre H2H for fixture {}: {}", fixture.getId(), e.getMessage());
-            }
-        }
-        log.info("Fullførte H2H-datainnsamling.");
-    }
-
-    // NY HJELPEMETODE
-    private HeadToHeadStats parseAndCreateH2hStats(JsonNode h2hFixtures, Fixture contextFixture) {
-        HeadToHeadStats stats = new HeadToHeadStats();
-        stats.setFixture(contextFixture);
-        stats.setTeam1Id(contextFixture.getHomeTeamId());
-        stats.setTeam2Id(contextFixture.getAwayTeamId());
-
-        if (h2hFixtures == null || !h2hFixtures.isArray() || h2hFixtures.isEmpty()) {
-            return stats; // Returnerer med default 0-verdier
-        }
-
-        int homeWins = 0, awayWins = 0, draws = 0, totalGoals = 0;
-
-        for (JsonNode h2h : h2hFixtures) {
-            JsonNode teams = h2h.path("teams");
-            Integer h2hHomeId = teams.path("home").path("id").asInt();
-            boolean isHomeWinner = teams.path("home").path("winner").asBoolean(false);
-            boolean isAwayWinner = teams.path("away").path("winner").asBoolean(false);
-
-            if (isHomeWinner) {
-                if (h2hHomeId.equals(contextFixture.getHomeTeamId())) homeWins++; else awayWins++;
-            } else if (isAwayWinner) {
-                if (h2hHomeId.equals(contextFixture.getHomeTeamId())) awayWins++; else homeWins++;
-            } else {
-                draws++;
-            }
-            totalGoals += h2h.path("goals").path("home").asInt(0) + h2h.path("goals").path("away").asInt(0);
-        }
-
-        stats.setMatchesPlayed(h2hFixtures.size());
-        stats.setTeam1Wins(homeWins);
-        stats.setTeam2Wins(awayWins);
-        stats.setDraws(draws);
-        stats.setAvgTotalGoals(h2hFixtures.size() > 0 ? (double) totalGoals / h2hFixtures.size() : 0.0);
-
-        return stats;
-    }
-
-    private void saveAllDataFromFixtures(JsonNode bulkFixtures) {
+    @Transactional
+    public void saveAllDataFromFixtures(JsonNode bulkFixtures) {
         List<Player> newPlayersToSave = new ArrayList<>();
         List<PlayerMatchStatistics> newPlayerStatsToSave = new ArrayList<>();
         List<MatchStatistics> newTeamStatsToSave = new ArrayList<>();
@@ -224,7 +156,8 @@ public class HistoricalDataWorker {
         if (!newPlayerStatsToSave.isEmpty()) playerMatchStatsRepository.saveAll(newPlayerStatsToSave);
     }
 
-    private void saveAllInjuries(JsonNode bulkInjuries) {
+    @Transactional
+    public void saveAllInjuries(JsonNode bulkInjuries) {
         List<Injury> newInjuriesToSave = new ArrayList<>();
         for (JsonNode injuryNode : bulkInjuries) {
             long fixtureId = injuryNode.path("fixture").path("id").asLong();
@@ -234,6 +167,69 @@ public class HistoricalDataWorker {
             }
         }
         if (!newInjuriesToSave.isEmpty()) injuryRepository.saveAll(newInjuriesToSave);
+    }
+
+    @Transactional
+    public void saveHeadToHeadData(List<Fixture> fixtures) throws InterruptedException {
+        log.info("Starter H2H-datainnsamling for {} kamper...", fixtures.size());
+        for (Fixture fixture : fixtures) {
+            if (h2hStatsRepository.existsByFixtureId(fixture.getId())) {
+                continue;
+            }
+
+            String h2hQuery = fixture.getHomeTeamId() + "-" + fixture.getAwayTeamId();
+            try {
+                Thread.sleep(220);
+
+                ResponseEntity<String> response = footballApiService.getHeadToHead(h2hQuery).block(Duration.ofSeconds(15));
+                if (response != null && response.getBody() != null) {
+                    JsonNode h2hFixtures = objectMapper.readTree(response.getBody()).path("response");
+                    HeadToHeadStats h2hStats = parseAndCreateH2hStats(h2hFixtures, fixture);
+                    h2hStatsRepository.save(h2hStats);
+                    log.info("Lagret H2H-data for fixture ID: {}", fixture.getId());
+                }
+            } catch (Exception e) {
+                log.warn("Kunne ikke hente eller lagre H2H for fixture {}: {}", fixture.getId(), e.getMessage());
+            }
+        }
+        log.info("Fullførte H2H-datainnsamling.");
+    }
+
+    private HeadToHeadStats parseAndCreateH2hStats(JsonNode h2hFixtures, Fixture contextFixture) {
+        HeadToHeadStats stats = new HeadToHeadStats();
+        stats.setFixture(contextFixture);
+        stats.setTeam1Id(contextFixture.getHomeTeamId());
+        stats.setTeam2Id(contextFixture.getAwayTeamId());
+
+        if (h2hFixtures == null || !h2hFixtures.isArray() || h2hFixtures.isEmpty()) {
+            return stats;
+        }
+
+        int homeWins = 0, awayWins = 0, draws = 0, totalGoals = 0;
+
+        for (JsonNode h2h : h2hFixtures) {
+            JsonNode teams = h2h.path("teams");
+            Integer h2hHomeId = teams.path("home").path("id").asInt();
+            boolean isHomeWinner = teams.path("home").path("winner").asBoolean(false);
+            boolean isAwayWinner = teams.path("away").path("winner").asBoolean(false);
+
+            if (isHomeWinner) {
+                if (h2hHomeId.equals(contextFixture.getHomeTeamId())) homeWins++; else awayWins++;
+            } else if (isAwayWinner) {
+                if (h2hHomeId.equals(contextFixture.getHomeTeamId())) awayWins++; else homeWins++;
+            } else {
+                draws++;
+            }
+            totalGoals += h2h.path("goals").path("home").asInt(0) + h2h.path("goals").path("away").asInt(0);
+        }
+
+        stats.setMatchesPlayed(h2hFixtures.size());
+        stats.setTeam1Wins(homeWins);
+        stats.setTeam2Wins(awayWins);
+        stats.setDraws(draws);
+        stats.setAvgTotalGoals(h2hFixtures.size() > 0 ? (double) totalGoals / h2hFixtures.size() : 0.0);
+
+        return stats;
     }
 
     private Set<Integer> extractAllPlayerIds(JsonNode bulkFixtures) {

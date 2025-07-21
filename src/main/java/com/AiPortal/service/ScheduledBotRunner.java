@@ -129,6 +129,7 @@ public class ScheduledBotRunner {
                 .replaceAll("[^a-zA-Z0-9]", "")
                 .toLowerCase();
     }
+
     @Async("taskExecutor")
     @Scheduled(fixedRate = 300000, initialDelay = 30000)
     public void fetchPinnacleOdds() {
@@ -153,7 +154,9 @@ public class ScheduledBotRunner {
             }
         }
     }
-    private void processPinnacleResponse(ResponseEntity<String> responseEntity, BotConfiguration bot, java.util.function.Consumer<JsonNode> eventProcessor) {
+
+    @Transactional
+    public void processPinnacleResponse(ResponseEntity<String> responseEntity, BotConfiguration bot, java.util.function.Consumer<JsonNode> eventProcessor) {
         try {
             if (responseEntity == null || !responseEntity.getStatusCode().is2xxSuccessful() || responseEntity.getBody() == null) {
                 log.warn("---[PINNACLE V5]--- Mottok ugyldig svar fra Pinnacle API.");
@@ -177,6 +180,7 @@ public class ScheduledBotRunner {
             log.error("---[PINNACLE V5] Feil ved parsing av Pinnacle-respons: {}", e.getMessage(), e);
         }
     }
+
     @Transactional
     public void processPinnacleMarketEvent(JsonNode event) {
         findExistingFixtureFromPinnacleEvent(event).ifPresent(fixture -> {
@@ -191,6 +195,7 @@ public class ScheduledBotRunner {
             }
         });
     }
+
     @Transactional
     public void processPinnacleSpecialEvent(JsonNode special) {
         if (!special.has("event") || special.get("event").isNull()) return;
@@ -263,6 +268,8 @@ public class ScheduledBotRunner {
         }
         return objectMapper.writeValueAsString(valuesArray);
     }
+
+    @Async("taskExecutor")
     @Transactional
     public void runHistoricalDataCollector() {
         log.info("---[PRODUCER V2] Forbereder historisk datainnsamling.---");
@@ -305,6 +312,7 @@ public class ScheduledBotRunner {
             }
         }
     }
+
     @Async("taskExecutor")
     @Scheduled(fixedRate = 2000, initialDelay = 5000)
     public void processNextFixtureChunk() {
@@ -325,6 +333,7 @@ public class ScheduledBotRunner {
             chunkProcessingLock.unlock();
         }
     }
+
     @Transactional
     public Optional<PendingFixtureChunk> findAndLockNextChunk() {
         Instant timeout = Instant.now().minus(5, ChronoUnit.MINUTES);
@@ -342,6 +351,7 @@ public class ScheduledBotRunner {
         });
         return chunkOpt;
     }
+
     @Scheduled(fixedRate = 960000, initialDelay = 60000)
     @Transactional
     public void runTwitterSearchBot() {
@@ -400,6 +410,7 @@ public class ScheduledBotRunner {
             }
         }
     }
+
     @Scheduled(cron = "0 0 5 * * *", zone = "Europe/Oslo")
     @Transactional
     public void updateFootballMetadata() {
@@ -434,8 +445,7 @@ public class ScheduledBotRunner {
         });
     }
 
-    // *** OPPDATERT METODE ***
-    @Async("taskExecutor") // Kjører i en egen bakgrunnstråd
+    @Async("taskExecutor")
     @Scheduled(cron = "0 0 1 * * *", zone = "Europe/Oslo")
     public void fetchDailyOdds() {
         List<String> datesToFetch = IntStream.range(0, 7).mapToObj(i -> LocalDate.now().plusDays(i).toString()).collect(Collectors.toList());
@@ -468,8 +478,7 @@ public class ScheduledBotRunner {
         }
     }
 
-    // *** OPPDATERT METODE ***
-    @Transactional // Hver kamp lagres i sin egen, korte transaksjon
+    @Transactional
     public void processSingleFixtureWithOdds(JsonNode oddsResponse) {
         long fixtureId = oddsResponse.path("fixture").path("id").asLong();
         if (fixtureId == 0) return;
@@ -508,7 +517,6 @@ public class ScheduledBotRunner {
         }
     }
 
-    // Denne metoden er nå en hjelpemetode og trenger ikke være transaksjonell selv.
     public Fixture saveOrUpdateFixtureFromOddsResponse(JsonNode oddsResponse) {
         JsonNode fixtureNode = oddsResponse.path("fixture");
         long fixtureId = fixtureNode.path("id").asLong();
@@ -524,7 +532,6 @@ public class ScheduledBotRunner {
         fixture.setHomeTeamName(teamsNode.path("home").path("name").asText());
         fixture.setAwayTeamId(teamsNode.path("away").path("id").asInt());
         fixture.setAwayTeamName(teamsNode.path("away").path("name").asText());
-        // VIKTIG: Legg til oppdatering av mål!
         JsonNode goalsNode = oddsResponse.path("goals");
         if (goalsNode.has("home") && !goalsNode.get("home").isNull()) {
             fixture.setGoalsHome(goalsNode.get("home").asInt());
@@ -537,7 +544,6 @@ public class ScheduledBotRunner {
 
     @Async("taskExecutor")
     @Scheduled(cron = "0 15 3 * * *", zone = "Europe/Oslo")
-    @Transactional
     public void runLeagueStatsCollector() {
         log.info("---[EFFEKTIV] Starter innsamling av komplette ligatabeller.---");
         List<BotConfiguration> leagueBots = botConfigService.getAllBotsByStatusAndType(

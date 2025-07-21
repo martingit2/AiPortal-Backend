@@ -16,7 +16,6 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -69,6 +68,7 @@ public class PortfolioService {
                 .map(portfolio -> {
                     portfolio.setActive(!portfolio.isActive());
                     VirtualPortfolio updatedPortfolio = portfolioRepository.save(portfolio);
+                    // Last inn på nytt med modellen for å returnere en komplett DTO
                     VirtualPortfolio reloadedPortfolio = portfolioRepository.findAllWithModel().stream()
                             .filter(p -> p.getId().equals(updatedPortfolio.getId()))
                             .findFirst()
@@ -79,6 +79,7 @@ public class PortfolioService {
 
     public void deletePortfolio(Long portfolioId) {
         if (portfolioRepository.existsById(portfolioId)) {
+            // Slett alle bets knyttet til porteføljen først for å unngå constraint-feil
             List<PlacedBet> betsToDelete = placedBetRepository.findByPortfolioIdOrderByPlacedAtDesc(portfolioId);
             placedBetRepository.deleteAll(betsToDelete);
 
@@ -105,7 +106,6 @@ public class PortfolioService {
                 .map(bet -> {
                     Fixture fixture = fixtureMap.get(bet.getFixtureId());
                     if (fixture == null) {
-                        // Lag en placeholder hvis fixture-data av en eller annen grunn mangler
                         fixture = new Fixture();
                         fixture.setHomeTeamName("Ukjent");
                         fixture.setAwayTeamName("Lag");
@@ -113,5 +113,10 @@ public class PortfolioService {
                     return new PlacedBetDto(bet, fixture);
                 })
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public long countPendingBets(Long portfolioId) {
+        return placedBetRepository.countByPortfolioIdAndStatus(portfolioId, PlacedBet.BetStatus.PENDING);
     }
 }
