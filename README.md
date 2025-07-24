@@ -63,6 +63,8 @@ Per i dag er plattformen primært fokusert på **sportsanalyse og betting**, men
 
 Her er noen glimt fra plattformens ulike funksjoner, som viser administrasjon av datakilder, analyse av resultater og visualisering av data.
 
+Her er noen glimt fra plattformens ulike funksjoner, som viser administrasjon av datakilder, analyse av resultater og visualisering av data.
+
 | Bot-administrasjon (CRUD) | Ligatabeller med Drill-Down |
 | :----------------------------------------------------------: | :----------------------------------------------------------: |
 | ![Bilde av bot-administrasjonssiden](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/boter.png) | ![Bilde av fotball-stats siden](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/fotball-stats.png) |
@@ -70,6 +72,10 @@ Her er noen glimt fra plattformens ulike funksjoner, som viser administrasjon av
 | ![Bilde av oddsanalyse-siden](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/odds-analyse.png)        | ![Bilde av spillerstatistikk-modalen](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/spiller-stats.png) |
 | **Interaktiv Form-analyse**                                         | **Oversikt over Tilgjengelig Odds**                               |
 | ![Bilde av lagdetaljer-siden med graf](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/lagdetaljer.png) | ![Bilde av odds-oversikt modalen](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/odds.png) |
+| **Porteføljeoversikt** | **Administrasjon av Porteføljespill** |
+| ![Bilde av porteføljeoversikt](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/portfolio.png) | ![Bilde av spesifikke spill i porteføljen](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/portfoliobets.png) |
+| **Prediksjonsmodeller** | **Utvidet Odds-visning** |
+| ![Bilde av oversikt over modeller](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/modeller.png) | ![Bilde av utvidet odds-visning](https://raw.githubusercontent.com/martingit2/AiPortal-Frontend/main/src/bilder/merodds.png) |
 
 ---
 
